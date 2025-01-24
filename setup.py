@@ -7,7 +7,6 @@ setup(
     install_requires=[
         "pyrogram>=2.0.0",
         "tgcrypto>=1.2.0",
-        "python-telegram-bot>=20.0",
         "python-dotenv>=0.19.0",
         "yt-dlp>=2023.3.4",
     ],
