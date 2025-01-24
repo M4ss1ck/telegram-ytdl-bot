@@ -1,0 +1,16 @@
+from dotenv import load_dotenv
+import os
+from pathlib import Path
+
+class Config:
+    def __init__(self):
+        load_dotenv()
+        self.API_ID = int(os.getenv('API_ID'))  # Convert to integer
+        self.API_HASH = os.getenv('API_HASH')
+        self.BOT_TOKEN = os.getenv('BOT_TOKEN')
+        
+        if not all([self.API_ID, self.API_HASH, self.BOT_TOKEN]):
+            raise ValueError("API_ID, API_HASH or BOT_TOKEN not found in environment variables")
+        
+        self.downloads_dir = Path(__file__).parent.parent / "downloads"
+        os.makedirs(self.downloads_dir, exist_ok=True)
