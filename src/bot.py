@@ -70,6 +70,8 @@ class Bot:
             except Exception as e:
                 logging.error(f"Error processing URL {url}: {str(e)}")
                 await status_message.delete()
+                if message.chat.type == "private":
+                    await message.reply_text(f"Error: {str(e)}")
 
     async def _upload_progress(self, current, total, status_message):
         try:
