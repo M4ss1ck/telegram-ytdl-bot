@@ -1,6 +1,7 @@
 from pyrogram import Client, filters
 import os
 import asyncio
+import re
 
 from src.config import Config
 from src.downloader import Downloader
@@ -32,8 +33,15 @@ class Bot:
             # Ignore commands
             if message.text.startswith('/'):
                 return
+
+            # Find first URL in message
+            url_pattern = r'(https?://\S+)'
+            match = re.search(url_pattern, message.text)
+            
+            if not match:
+                return
                 
-            url = message.text
+            url = match.group(1)
             status_message = await message.reply_text("Downloading...")
             
             try:
