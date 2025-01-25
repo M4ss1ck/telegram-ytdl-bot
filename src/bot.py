@@ -2,6 +2,7 @@ from pyrogram import Client, filters
 import os
 import asyncio
 import re
+import logging
 
 from src.config import Config
 from src.downloader import Downloader
@@ -67,7 +68,8 @@ class Bot:
                 await status_message.delete()
                 
             except Exception as e:
-                await status_message.edit_text(f"Error: {str(e)}")
+                logging.error(f"Error processing URL {url}: {str(e)}")
+                await status_message.delete()
 
     async def _upload_progress(self, current, total, status_message):
         try:
