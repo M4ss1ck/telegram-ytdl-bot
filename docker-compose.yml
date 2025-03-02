@@ -1,9 +1,18 @@
-
-version: '3.8'
-
 services:
   bot:
-    build: .
+    build:
+      context: .
+      target: development  # Matches Dockerfile stage name
     volumes:
       - ./.env:/app/.env:ro
     restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    develop:
+      watch:
+        - action: sync
+          path: ./src
+          target: /app/src
+        - action: rebuild
+          path: ./Dockerfile
+          target: development
