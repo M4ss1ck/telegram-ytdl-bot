@@ -3,9 +3,13 @@ import os
 import asyncio
 import re
 import logging
+from urllib.parse import urlparse
 
 from src.config import Config
 from src.downloader import Downloader
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class Bot:
     def __init__(self):
@@ -17,8 +21,13 @@ class Bot:
             api_hash=self.config.API_HASH,
             bot_token=self.config.BOT_TOKEN
         )
+        self.active_uploads = {}  # Track active uploads for progress throttling
+        self.last_progress = self.config.LAST_PROGRESS
 
         # Register handlers
+        self.register_handlers()
+
+    def register_handlers(self):
         @self.app.on_message(filters.command("start"))
         async def start(client, message):
             await message.reply_text(
@@ -28,61 +37,142 @@ class Bot:
         @self.app.on_message(filters.command("ping"))
         async def ping(client, message):
             await message.reply_text("Pong!")
-
-        @self.app.on_message(filters.text)
+        @self.app.on_message(filters.text & ~filters.create(
+            lambda _, __, m: m.text.startswith('/')
+        ))
         async def handle_url(client, message):
-            # Ignore commands
-            if message.text.startswith('/'):
+            urls = self.extract_urls(message.text)
+            if not urls:
                 return
 
-            # Find first URL in message
-            url_pattern = r'(https?://\S+)'
-            match = re.search(url_pattern, message.text)
-            
-            if not match:
-                return
-                
-            url = match.group(1)
+            url = urls[0]
             status_message = await message.reply_text("Downloading...")
-            
+            file_path = None
+
             try:
-                file_path = await self.downloader.download(url)
+                # Download with timeout
+                file_path = await asyncio.wait_for(
+                    self.downloader.download(url),
+                    timeout=self.config.DOWNLOAD_TIMEOUT
+                )
+
+                # Validate downloaded file
+                if not file_path or not os.path.exists(file_path):
+                    raise ValueError("Download failed - no file created")
+
+                file_size = os.path.getsize(file_path)
+                if file_size > self.config.MAX_FILE_SIZE:
+                    raise ValueError(f"File too large ({file_size/1024/1024:.1f}MB > "
+                                    f"{self.config.MAX_FILE_SIZE/1024/1024}MB")
+
                 await status_message.edit_text("Upload in progress...")
                 
-                progress_args = (status_message,)
-                
-                if file_path.endswith(('.mp4', '.mkv')):
-                    await message.reply_video(
-                        file_path,
-                        progress=self._upload_progress,
-                        progress_args=progress_args
-                    )
-                else:
-                    await message.reply_document(
-                        file_path,
-                        progress=self._upload_progress,
-                        progress_args=progress_args
-                    )
-                
-                os.remove(file_path)
-                await status_message.delete()
-                
-            except Exception as e:
-                logging.error(f"Error processing URL {url}: {str(e)}")
-                await status_message.delete()
-                if message.chat.type == "private":
-                    await message.reply_text(f"Error: {str(e)}")
+                # Upload with progress tracking
+                await self.upload_file(message, file_path, status_message)
 
-    async def _upload_progress(self, current, total, status_message):
+                # Only delete if upload succeeded
+                os.remove(file_path)
+
+            except asyncio.TimeoutError:
+                error_msg = "Download timed out"
+                logger.error(error_msg)
+                await self.send_error(message, error_msg)
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
+                await self.send_error(message, f"Error: {str(e)}")
+            finally:
+                # Cleanup files only if they exist
+                if file_path and os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        logger.error(f"Error deleting file: {e}")
+                await status_message.delete()
+
+    def extract_urls(self, text):
+        """Improved URL extraction with basic validation"""
+        url_pattern = r'https?://(?:www\.)?[^\s<>"]+|www\.[^\s<>"]+'
+        matches = re.findall(url_pattern, text)
+        valid_urls = []
+        
+        for url in matches:
+            # Add http:// prefix if missing
+            if not url.startswith(('http://', 'https://')):
+                url = f'http://{url}'
+            # Basic URL validation
+            try:
+                result = urlparse(url)
+                if all([result.scheme, result.netloc]):
+                    valid_urls.append(url)
+            except:
+                continue
+        
+        return valid_urls
+
+    async def upload_file(self, message, file_path, status_message):
+        """Handle file upload with progress throttling"""
         try:
-            percent = current * 100 / total
-            await status_message.edit_text(f"Uploading: {percent:.1f}%")
-            await asyncio.sleep(0.5)  # Prevent flood
-        except Exception:
-            pass
+            # Use list for mutable start time
+            progress_args = (status_message, [asyncio.get_event_loop().time()])
+            
+            if file_path.endswith(('.mp4', '.mkv', '.webm')):
+                await message.reply_video(
+                    video=file_path,
+                    progress=self._upload_progress,
+                    progress_args=progress_args,
+                    supports_streaming=True
+                )
+            else:
+                await message.reply_document(
+                    document=file_path,
+                    progress=self._upload_progress,
+                    progress_args=progress_args
+                )
+        except Exception as e:
+            logger.error(f"Upload failed: {e}")
+            raise
+
+    async def _upload_progress(self, current, total, status_message, start_time):
+        """Throttled progress updates"""
+        try:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - start_time[0]
+            
+            # Calculate current progress ratio
+            current_progress = current / total
+            
+            # Update at most every 2 seconds or when 5% progress is made
+            if elapsed < 2 and (current_progress - self.last_progress) < 0.05:
+                return
+            
+            # Update tracking variables
+            self.last_progress = current_progress
+            start_time[0] = now
+            
+            percent = current_progress * 100
+            await status_message.edit_text(
+                f"Uploading: {percent:.1f}%\n"
+                f"Size: {current//1024}KB/{total//1024}KB"
+            )
+        except Exception as e:
+            logger.warning(f"Progress update failed: {e}")
+
+    async def send_error(self, message, error_text):
+        """Send error messages only in private chats"""
+        if message.chat.type == "private":
+            try:
+                await message.reply_text(
+                    error_text,
+                    disable_web_page_preview=True,
+                    reply_to_message_id=message.id
+                )
+            except Exception as e:
+                logger.error(f"Failed to send error message in private chat: {e}")
+        else:
+            logger.info(f"Error occurred in {message.chat.type} chat")
 
     def run(self):
-        print("Bot is running...")
+        logger.info("Bot is starting...")
         self.app.run()
 
 if __name__ == "__main__":
