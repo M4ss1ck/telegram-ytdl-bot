@@ -2,10 +2,10 @@ import os
 import logging
 import re
 import asyncio
+import yt_dlp
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from pathlib import Path
-import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -13,16 +13,14 @@ class SpotifyDownloader:
     def __init__(self, config):
         self.config = config
         
-        # Initialize Spotify client if credentials are available
-        self.spotify_client = None
-        self._init_spotify_client()
+        # Initialize Spotify client
+        client_id = os.environ.get('SPOTIFY_CLIENT_ID')
+        client_secret = os.environ.get('SPOTIFY_CLIENT_SECRET')
         
-    def _init_spotify_client(self):
-        """Initialize Spotify client if credentials are available"""
-        client_id = os.getenv('SPOTIFY_CLIENT_ID')
-        client_secret = os.getenv('SPOTIFY_CLIENT_SECRET')
-        
-        if client_id and client_secret:
+        if not client_id or not client_secret:
+            logger.warning("Spotify credentials not found in environment variables")
+            self.spotify_client = None
+        else:
             try:
                 auth_manager = SpotifyClientCredentials(
                     client_id=client_id,
@@ -31,35 +29,35 @@ class SpotifyDownloader:
                 self.spotify_client = spotipy.Spotify(auth_manager=auth_manager)
                 logger.info("Spotify client initialized successfully")
             except Exception as e:
-                logger.warning(f"Failed to initialize Spotify client: {e}")
-        else:
-            logger.warning("Spotify credentials not found. Some features may be limited.")
+                logger.error(f"Failed to initialize Spotify client: {e}")
+                self.spotify_client = None
     
     def _extract_spotify_id(self, url):
         """Extract the Spotify ID from a URL"""
         # Handle different Spotify URL formats
         patterns = [
-            r'spotify:track:([a-zA-Z0-9]+)',
-            r'spotify:album:([a-zA-Z0-9]+)',
-            r'spotify:playlist:([a-zA-Z0-9]+)',
-            r'spotify:artist:([a-zA-Z0-9]+)',
-            r'spotify.com/track/([a-zA-Z0-9]+)',
-            r'spotify.com/album/([a-zA-Z0-9]+)',
-            r'spotify.com/playlist/([a-zA-Z0-9]+)',
-            r'spotify.com/artist/([a-zA-Z0-9]+)',
+            r'spotify\.com/track/([a-zA-Z0-9]+)',
+            r'spotify\.com/album/([a-zA-Z0-9]+)',
+            r'spotify\.com/playlist/([a-zA-Z0-9]+)',
+            r'spotify\.com/artist/([a-zA-Z0-9]+)',
+            # Add support for regional URLs with /intl-xx/ in the path
+            r'spotify\.com/intl-[a-z]{2}/track/([a-zA-Z0-9]+)',
+            r'spotify\.com/intl-[a-z]{2}/album/([a-zA-Z0-9]+)',
+            r'spotify\.com/intl-[a-z]{2}/playlist/([a-zA-Z0-9]+)',
+            r'spotify\.com/intl-[a-z]{2}/artist/([a-zA-Z0-9]+)',
         ]
         
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:
-                return match.group(1), url.split(':')[1] if ':' in url else url.split('/')[-1].split('?')[0]
+                return match.group(1)
         
-        return None, None
+        return None
     
     async def download(self, url):
         """Download content from Spotify"""
-        spotify_id, content_type = self._extract_spotify_id(url)
-        if not spotify_id or not content_type:
+        spotify_id = self._extract_spotify_id(url)
+        if not spotify_id:
             raise ValueError("Invalid Spotify URL format")
         
         try:
@@ -67,7 +65,16 @@ class SpotifyDownloader:
             temp_dir = self.config.downloads_dir / f"spotify_{spotify_id}"
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Use yt-dlp with Spotify-specific options
+            # Get track information if possible
+            track_info = None
+            if self.spotify_client:
+                try:
+                    track_info = self.spotify_client.track(spotify_id)
+                    logger.info(f"Retrieved track info: {track_info['name']} by {track_info['artists'][0]['name']}")
+                except Exception as e:
+                    logger.warning(f"Failed to get track info from Spotify API: {e}")
+            
+            # Set up yt-dlp options
             ydl_opts = {
                 'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
                 'format': 'bestaudio/best',
@@ -84,15 +91,6 @@ class SpotifyDownloader:
                 'no_color': True,
             }
             
-            # If we have Spotify credentials, try to get track info
-            track_info = None
-            if self.spotify_client and content_type == 'track':
-                try:
-                    track_info = self.spotify_client.track(spotify_id)
-                    logger.info(f"Retrieved track info: {track_info['name']} by {track_info['artists'][0]['name']}")
-                except Exception as e:
-                    logger.warning(f"Failed to get track info from Spotify API: {e}")
-            
             # Download using yt-dlp
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # First extract info to validate URL
@@ -100,14 +98,15 @@ class SpotifyDownloader:
                 
                 # Check if we got valid info
                 if not info:
-                    raise Exception("Could not extract information from Spotify URL")
+                    raise Exception("Could not extract information from URL")
                 
                 # Now download the audio
                 ydl.download([url])
                 
                 # Get the filename
                 filename = ydl.prepare_filename(info)
-                # Change extension to mp3 since we're using FFmpegExtractAudio
+                
+                # Handle audio files
                 base_filename = os.path.splitext(filename)[0]
                 file_path = f"{base_filename}.mp3"
                 
@@ -116,7 +115,18 @@ class SpotifyDownloader:
                     raise Exception("Downloaded file is empty or does not exist")
                 
                 # Move the file to the downloads directory with a better name
-                target_file = self.config.downloads_dir / f"spotify_{spotify_id}.mp3"
+                if track_info:
+                    # Use track info for filename if available
+                    artist = track_info['artists'][0]['name']
+                    title = track_info['name']
+                    safe_artist = re.sub(r'[^\w\s-]', '', artist)
+                    safe_title = re.sub(r'[^\w\s-]', '', title)
+                    target_file = self.config.downloads_dir / f"spotify_{safe_artist}_{safe_title}.mp3"
+                else:
+                    # Use the original filename
+                    target_file = self.config.downloads_dir / f"spotify_{spotify_id}.mp3"
+                
+                # Rename the file
                 os.rename(file_path, target_file)
                 
                 # Clean up the temporary directory
