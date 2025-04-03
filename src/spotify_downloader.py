@@ -6,6 +6,8 @@ import yt_dlp
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 from pathlib import Path
+import urllib.parse
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,9 @@ class SpotifyDownloader:
     
     def _extract_spotify_id(self, url):
         """Extract the Spotify ID from a URL"""
+        # Parse URL to handle query parameters
+        parsed_url = urllib.parse.urlparse(url)
+        
         # Handle different Spotify URL formats
         patterns = [
             r'spotify\.com/track/([a-zA-Z0-9]+)',
@@ -47,6 +52,7 @@ class SpotifyDownloader:
             r'spotify\.com/intl-[a-z]{2}/artist/([a-zA-Z0-9]+)',
         ]
         
+        path = parsed_url.path
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:
@@ -54,8 +60,19 @@ class SpotifyDownloader:
         
         return None
     
+    def _create_youtube_search_query(self, track_info):
+        """Create a YouTube search query from Spotify track info"""
+        if not track_info:
+            return None
+            
+        artist = track_info['artists'][0]['name']
+        title = track_info['name']
+        
+        # Create a YouTube search query
+        return f"{artist} - {title} audio"
+    
     async def download(self, url):
-        """Download content from Spotify"""
+        """Download content from Spotify by finding it on YouTube"""
         spotify_id = self._extract_spotify_id(url)
         if not spotify_id:
             raise ValueError("Invalid Spotify URL format")
@@ -65,14 +82,28 @@ class SpotifyDownloader:
             temp_dir = self.config.downloads_dir / f"spotify_{spotify_id}"
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Get track information if possible
+            # Get track information from Spotify API
             track_info = None
+            youtube_search_query = None
+            
             if self.spotify_client:
                 try:
                     track_info = self.spotify_client.track(spotify_id)
-                    logger.info(f"Retrieved track info: {track_info['name']} by {track_info['artists'][0]['name']}")
+                    artist = track_info['artists'][0]['name']
+                    title = track_info['name']
+                    youtube_search_query = self._create_youtube_search_query(track_info)
+                    logger.info(f"Retrieved track info: {title} by {artist}")
+                    logger.info(f"Using YouTube search query: {youtube_search_query}")
                 except Exception as e:
                     logger.warning(f"Failed to get track info from Spotify API: {e}")
+            
+            if not youtube_search_query:
+                # Fallback if we couldn't get track info
+                logger.warning("Using Spotify URL directly as fallback")
+                download_url = url
+            else:
+                # Use the YouTube search query
+                download_url = f"ytsearch:{youtube_search_query}"
             
             # Set up yt-dlp options
             ydl_opts = {
@@ -89,19 +120,36 @@ class SpotifyDownloader:
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
                 'no_color': True,
+                # Add YouTube-specific options
+                'default_search': 'ytsearch',
+                'noplaylist': True,
+                # Add random sleep between 1-3 seconds to avoid rate limiting
+                'sleep_interval': random.randint(1, 3),
             }
             
             # Download using yt-dlp
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # First extract info to validate URL
-                info = ydl.extract_info(url, download=False)
+                # Extract info to validate URL
+                logger.info(f"Extracting info from {download_url}")
+                info = ydl.extract_info(download_url, download=False)
                 
                 # Check if we got valid info
                 if not info:
                     raise Exception("Could not extract information from URL")
                 
+                # If we're using a search query, get the first result
+                if 'entries' in info:
+                    logger.info(f"Found {len(info['entries'])} search results")
+                    if not info['entries']:
+                        raise Exception("No search results found")
+                    
+                    # Use the first search result
+                    info = info['entries'][0]
+                    logger.info(f"Using search result: {info.get('title', 'Unknown title')}")
+                
                 # Now download the audio
-                ydl.download([url])
+                logger.info(f"Downloading audio from {info.get('webpage_url', download_url)}")
+                ydl.download([info.get('webpage_url', download_url)])
                 
                 # Get the filename
                 filename = ydl.prepare_filename(info)

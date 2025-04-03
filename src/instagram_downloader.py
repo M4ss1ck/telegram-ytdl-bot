@@ -8,18 +8,31 @@ import time
 
 logger = logging.getLogger(__name__)
 
-class SimpleRateController:
+class SimpleRateController(instaloader.RateController):
     """A simple rate controller for Instaloader that uses time.sleep"""
-    def __init__(self, sleep_time=2):
+    def __init__(self, context, sleep_time=2):
+        super().__init__(context)
         self.sleep_time = sleep_time
         
-    def wait_before_query(self, *args, **kwargs):
-        """Wait before making a query"""
-        time.sleep(self.sleep_time)
+    def sleep(self, secs):
+        """Wait given number of seconds"""
+        time.sleep(secs)
         
-    def wait_before_download(self, *args, **kwargs):
-        """Wait before downloading"""
-        time.sleep(self.sleep_time)
+    def query_waittime(self, query_type, current_time, untracked_queries=False):
+        """Calculate time needed to wait before query can be executed"""
+        # Simple implementation that always returns the same sleep time
+        return self.sleep_time
+        
+    def handle_429(self, query_type):
+        """Handle a 429 Too Many Requests response"""
+        wait_time = self.query_waittime(query_type, time.time())
+        logger.warning(f"Rate limit hit for {query_type}, waiting {wait_time} seconds")
+        self.sleep(wait_time)
+        
+    def count_per_sliding_window(self, query_type):
+        """Return how many requests of the given type can be done within a sliding window"""
+        # Simple implementation that allows one request per sleep_time
+        return 1
 
 class InstagramDownloader:
     def __init__(self, config):
@@ -34,7 +47,7 @@ class InstagramDownloader:
             post_metadata_txt_pattern="",
             max_connection_attempts=3,
             request_timeout=30,
-            rate_controller=SimpleRateController(sleep_time=2),
+            rate_controller=lambda ctx: SimpleRateController(ctx, sleep_time=2),
         )
         
         # Try to load session if available
