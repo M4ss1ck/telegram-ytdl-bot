@@ -4,6 +4,7 @@ import asyncio
 import re
 import logging
 from .instagram_downloader import InstagramDownloader
+from .spotify_downloader import SpotifyDownloader
 
 logger = logging.getLogger(__name__)
 
@@ -11,10 +12,12 @@ class Downloader:
     def __init__(self, config):
         self.config = config
         self.instagram_downloader = InstagramDownloader(config)
+        self.spotify_downloader = SpotifyDownloader(config)
         
     async def download(self, url):
-        # Determine if this is an Instagram URL
+        # Determine the type of URL
         is_instagram = 'instagram.com' in url or 'instagr.am' in url
+        is_spotify = 'spotify.com' in url or 'spotify:' in url
         
         if is_instagram:
             try:
@@ -25,11 +28,20 @@ class Downloader:
                 logger.warning(f"Instaloader failed for Instagram URL: {e}. Falling back to yt-dlp.")
                 # Fall back to yt-dlp if Instaloader fails
                 return await self._download_with_ytdlp(url, is_instagram=True)
+        elif is_spotify:
+            try:
+                # Try using Spotify downloader
+                logger.info(f"Attempting to download Spotify URL: {url}")
+                return await self.spotify_downloader.download(url)
+            except Exception as e:
+                logger.warning(f"Spotify downloader failed: {e}. Falling back to yt-dlp.")
+                # Fall back to yt-dlp if Spotify downloader fails
+                return await self._download_with_ytdlp(url, is_spotify=True)
         else:
-            # Use yt-dlp for non-Instagram URLs
-            return await self._download_with_ytdlp(url, is_instagram=False)
+            # Use yt-dlp for other URLs
+            return await self._download_with_ytdlp(url)
     
-    async def _download_with_ytdlp(self, url, is_instagram=False):
+    async def _download_with_ytdlp(self, url, is_instagram=False, is_spotify=False):
         """Download using yt-dlp with appropriate options"""
         # Base options for all downloads
         ydl_opts = {
@@ -72,6 +84,23 @@ class Downloader:
                 'Connection': 'keep-alive',
             }
         
+        # Add Spotify-specific options if this is a Spotify URL
+        if is_spotify:
+            ydl_opts.update({
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '320',
+                }],
+                'extractor_args': {
+                    'spotify': {
+                        'client_id': os.getenv('SPOTIFY_CLIENT_ID'),
+                        'client_secret': os.getenv('SPOTIFY_CLIENT_SECRET'),
+                    }
+                }
+            })
+        
         try:
             return await asyncio.to_thread(self._download_video, url, ydl_opts)
         except Exception as e:
@@ -93,7 +122,13 @@ class Downloader:
                 
                 # Get the filename
                 filename = ydl.prepare_filename(info)
-                file_path = os.path.join(self.config.downloads_dir, filename)
+                
+                # Handle audio files (for Spotify)
+                if 'FFmpegExtractAudio' in [p['key'] for p in ydl_opts.get('postprocessors', [])]:
+                    base_filename = os.path.splitext(filename)[0]
+                    file_path = f"{base_filename}.mp3"
+                else:
+                    file_path = filename
                 
                 # Verify file exists and has content
                 if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:

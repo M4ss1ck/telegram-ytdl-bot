@@ -5,3 +5,5 @@ yt-dlp>=2023.11.16
 browser-cookie3>=0.19.1
 ffmpeg-python>=0.2.0
 instaloader>=4.10.0
+spotipy>=2.23.0
+youtube-dl-spotify>=1.0.0

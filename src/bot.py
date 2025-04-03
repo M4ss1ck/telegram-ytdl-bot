@@ -47,11 +47,16 @@ class Bot:
 
             url = urls[0]
             is_instagram = 'instagram.com' in url or 'instagr.am' in url
+            is_spotify = 'spotify.com' in url or 'spotify:' in url
             
-            # Provide more specific status message for Instagram
+            # Provide specific status message based on URL type
             if is_instagram:
                 status_message = await message.reply_text(
                     "Processing Instagram content with Instaloader... This may take a moment."
+                )
+            elif is_spotify:
+                status_message = await message.reply_text(
+                    "Processing Spotify content... Converting to MP3."
                 )
             else:
                 status_message = await message.reply_text("Downloading...")
@@ -66,13 +71,19 @@ class Bot:
                     timeout=self.config.DOWNLOAD_TIMEOUT
                 )
                 
-                # Check if the file path contains "instagram_" which indicates Instaloader was used
+                # Check which downloader was used based on the file path
                 if is_instagram and "instagram_" in file_path:
                     downloader_used = "Instaloader"
                     await status_message.edit_text("Instagram content downloaded successfully with Instaloader. Preparing to upload...")
                 elif is_instagram:
                     downloader_used = "yt-dlp (fallback)"
                     await status_message.edit_text("Instagram content downloaded with yt-dlp fallback. Preparing to upload...")
+                elif is_spotify and "spotify_" in file_path:
+                    downloader_used = "Spotify Downloader"
+                    await status_message.edit_text("Spotify content downloaded successfully. Preparing to upload...")
+                elif is_spotify:
+                    downloader_used = "yt-dlp (fallback)"
+                    await status_message.edit_text("Spotify content downloaded with yt-dlp fallback. Preparing to upload...")
                 else:
                     await status_message.edit_text("Download complete. Preparing to upload...")
 
@@ -91,26 +102,34 @@ class Bot:
                 await self.upload_file(message, file_path, status_message)
                 
                 # Send a success message with the downloader used
-                if is_instagram:
-                    await message.reply_text(f"✅ Instagram content successfully downloaded using {downloader_used}")
+                if is_instagram or is_spotify:
+                    await message.reply_text(f"✅ Content successfully downloaded using {downloader_used}")
 
                 # Only delete if upload succeeded
                 os.remove(file_path)
 
             except asyncio.TimeoutError:
-                error_msg = "Download timed out. Instagram may be rate-limiting requests."
+                error_msg = "Download timed out."
+                if is_instagram:
+                    error_msg += " Instagram may be rate-limiting requests."
+                elif is_spotify:
+                    error_msg += " Spotify conversion may be taking longer than expected."
                 logger.error(error_msg)
                 await self.send_error(message, error_msg)
             except Exception as e:
                 error_msg = str(e)
                 
-                # Provide more helpful error messages for Instagram
+                # Provide more helpful error messages for specific platforms
                 if is_instagram and "login_required" in error_msg.lower():
                     error_msg = "This Instagram content requires login. Try using a different URL or content that's publicly accessible."
                 elif is_instagram and "private" in error_msg.lower():
                     error_msg = "This Instagram content is private. Only public content can be downloaded."
                 elif is_instagram and "not available" in error_msg.lower():
                     error_msg = "This Instagram content is no longer available or has been removed."
+                elif is_spotify and "premium" in error_msg.lower():
+                    error_msg = "This Spotify content requires a premium account. Only publicly available tracks can be downloaded."
+                elif is_spotify and "region" in error_msg.lower():
+                    error_msg = "This Spotify content is not available in your region."
                 
                 logger.error(f"Error processing URL {url}: {error_msg}", exc_info=True)
                 await self.send_error(message, f"Error: {error_msg}")
