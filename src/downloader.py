@@ -63,7 +63,6 @@ class Downloader:
         # Add Instagram-specific options if this is an Instagram URL
         if is_instagram:
             ydl_opts.update({
-                'cookiesfrombrowser': ('chrome',),  # Use cookies from Chrome browser
                 'extractor_args': {
                     'instagram': {
                         'include_feeds': True,

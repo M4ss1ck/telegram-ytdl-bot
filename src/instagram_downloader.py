@@ -4,6 +4,7 @@ import instaloader
 import re
 from pathlib import Path
 import asyncio
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class InstagramDownloader:
             post_metadata_txt_pattern="",
             max_connection_attempts=3,
             request_timeout=30,
-            rate_controller=lambda *args, **kwargs: asyncio.sleep(2),  # Rate limiting
+            rate_controller=lambda *args, **kwargs: time.sleep(2),
         )
         
         # Try to load session if available
@@ -67,11 +68,20 @@ class InstagramDownloader:
             # Set the download directory
             self.loader.dirname_pattern = str(temp_dir)
             
-            # Download the post
-            post = instaloader.Post.from_shortcode(self.loader.context, shortcode)
+            # Download the post - use asyncio.to_thread to run in a separate thread
+            # since Instaloader is not async-compatible
+            post = await asyncio.to_thread(
+                instaloader.Post.from_shortcode, 
+                self.loader.context, 
+                shortcode
+            )
             
             # Download the post
-            self.loader.download_post(post, target=shortcode)
+            await asyncio.to_thread(
+                self.loader.download_post, 
+                post, 
+                target=shortcode
+            )
             
             # Find the downloaded video file
             video_files = list(temp_dir.glob("*.mp4"))
