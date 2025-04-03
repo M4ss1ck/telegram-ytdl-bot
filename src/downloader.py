@@ -3,17 +3,34 @@ import os
 import asyncio
 import re
 import logging
+from .instagram_downloader import InstagramDownloader
 
 logger = logging.getLogger(__name__)
 
 class Downloader:
     def __init__(self, config):
         self.config = config
+        self.instagram_downloader = InstagramDownloader(config)
         
     async def download(self, url):
         # Determine if this is an Instagram URL
         is_instagram = 'instagram.com' in url or 'instagr.am' in url
         
+        if is_instagram:
+            try:
+                # Try using Instaloader first
+                logger.info(f"Attempting to download Instagram URL with Instaloader: {url}")
+                return await self.instagram_downloader.download(url)
+            except Exception as e:
+                logger.warning(f"Instaloader failed for Instagram URL: {e}. Falling back to yt-dlp.")
+                # Fall back to yt-dlp if Instaloader fails
+                return await self._download_with_ytdlp(url, is_instagram=True)
+        else:
+            # Use yt-dlp for non-Instagram URLs
+            return await self._download_with_ytdlp(url, is_instagram=False)
+    
+    async def _download_with_ytdlp(self, url, is_instagram=False):
+        """Download using yt-dlp with appropriate options"""
         # Base options for all downloads
         ydl_opts = {
             'outtmpl': str(self.config.downloads_dir / '%(title)s.%(ext)s'),
@@ -31,7 +48,7 @@ class Downloader:
             }],
         }
         
-        # Add Instagram-specific options
+        # Add Instagram-specific options if this is an Instagram URL
         if is_instagram:
             ydl_opts.update({
                 'cookiesfrombrowser': ('chrome',),  # Use cookies from Chrome browser

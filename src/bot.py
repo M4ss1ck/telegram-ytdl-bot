@@ -51,12 +51,13 @@ class Bot:
             # Provide more specific status message for Instagram
             if is_instagram:
                 status_message = await message.reply_text(
-                    "Processing Instagram content... This may take longer due to Instagram's restrictions."
+                    "Processing Instagram content with Instaloader... This may take a moment."
                 )
             else:
                 status_message = await message.reply_text("Downloading...")
             
             file_path = None
+            downloader_used = "yt-dlp"
 
             try:
                 # Download with timeout
@@ -64,6 +65,16 @@ class Bot:
                     self.downloader.download(url),
                     timeout=self.config.DOWNLOAD_TIMEOUT
                 )
+                
+                # Check if the file path contains "instagram_" which indicates Instaloader was used
+                if is_instagram and "instagram_" in file_path:
+                    downloader_used = "Instaloader"
+                    await status_message.edit_text("Instagram content downloaded successfully with Instaloader. Preparing to upload...")
+                elif is_instagram:
+                    downloader_used = "yt-dlp (fallback)"
+                    await status_message.edit_text("Instagram content downloaded with yt-dlp fallback. Preparing to upload...")
+                else:
+                    await status_message.edit_text("Download complete. Preparing to upload...")
 
                 # Validate downloaded file
                 if not file_path or not os.path.exists(file_path):
@@ -78,6 +89,10 @@ class Bot:
                 
                 # Upload with progress tracking
                 await self.upload_file(message, file_path, status_message)
+                
+                # Send a success message with the downloader used
+                if is_instagram:
+                    await message.reply_text(f"✅ Instagram content successfully downloaded using {downloader_used}")
 
                 # Only delete if upload succeeded
                 os.remove(file_path)
