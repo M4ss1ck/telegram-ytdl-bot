@@ -100,10 +100,6 @@ class Bot:
                 
                 # Upload with progress tracking
                 await self.upload_file(message, file_path, status_message)
-                
-                # Send a success message with the downloader used
-                if is_instagram or is_spotify:
-                    await message.reply_text(f"✅ Content successfully downloaded using {downloader_used}")
 
                 # Only delete if upload succeeded
                 os.remove(file_path)
