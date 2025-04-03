@@ -16,7 +16,7 @@ This project is a Telegram bot that allows users to download content from variou
 - `pyrogram` and `tgcrypto` for Telegram API
 - `yt-dlp` for general video downloads
 - `instaloader` for Instagram content
-- `spotipy` and `youtube-dl-spotify` for Spotify content
+- `spotipy` for Spotify content
 - `ffmpeg` for audio/video processing
 
 ## Installation

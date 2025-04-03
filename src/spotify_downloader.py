@@ -67,7 +67,7 @@ class SpotifyDownloader:
             temp_dir = self.config.downloads_dir / f"spotify_{spotify_id}"
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Use yt-dlp with youtube-dl-spotify plugin
+            # Use yt-dlp with Spotify-specific options
             ydl_opts = {
                 'outtmpl': str(temp_dir / '%(title)s.%(ext)s'),
                 'format': 'bestaudio/best',
@@ -82,13 +82,16 @@ class SpotifyDownloader:
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
                 'no_color': True,
-                'extractor_args': {
-                    'spotify': {
-                        'client_id': os.getenv('SPOTIFY_CLIENT_ID'),
-                        'client_secret': os.getenv('SPOTIFY_CLIENT_SECRET'),
-                    }
-                }
             }
+            
+            # If we have Spotify credentials, try to get track info
+            track_info = None
+            if self.spotify_client and content_type == 'track':
+                try:
+                    track_info = self.spotify_client.track(spotify_id)
+                    logger.info(f"Retrieved track info: {track_info['name']} by {track_info['artists'][0]['name']}")
+                except Exception as e:
+                    logger.warning(f"Failed to get track info from Spotify API: {e}")
             
             # Download using yt-dlp
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

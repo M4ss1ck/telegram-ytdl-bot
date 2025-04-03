@@ -17,8 +17,7 @@ COPY requirements.txt .
 # Install Python dependencies explicitly
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir instaloader>=4.10.0 && \
-    pip install --no-cache-dir spotipy>=2.23.0 && \
-    pip install --no-cache-dir youtube-dl-spotify>=1.0.0
+    pip install --no-cache-dir spotipy>=2.23.0
 
 # Copy project files
 COPY . .

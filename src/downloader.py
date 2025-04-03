@@ -92,13 +92,7 @@ class Downloader:
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
                     'preferredquality': '320',
-                }],
-                'extractor_args': {
-                    'spotify': {
-                        'client_id': os.getenv('SPOTIFY_CLIENT_ID'),
-                        'client_secret': os.getenv('SPOTIFY_CLIENT_SECRET'),
-                    }
-                }
+                }]
             })
         
         try:
