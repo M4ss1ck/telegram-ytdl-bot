@@ -8,6 +8,19 @@ import time
 
 logger = logging.getLogger(__name__)
 
+class SimpleRateController:
+    """A simple rate controller for Instaloader that uses time.sleep"""
+    def __init__(self, sleep_time=2):
+        self.sleep_time = sleep_time
+        
+    def wait_before_query(self, *args, **kwargs):
+        """Wait before making a query"""
+        time.sleep(self.sleep_time)
+        
+    def wait_before_download(self, *args, **kwargs):
+        """Wait before downloading"""
+        time.sleep(self.sleep_time)
+
 class InstagramDownloader:
     def __init__(self, config):
         self.config = config
@@ -21,7 +34,7 @@ class InstagramDownloader:
             post_metadata_txt_pattern="",
             max_connection_attempts=3,
             request_timeout=30,
-            rate_controller=lambda *args, **kwargs: time.sleep(2),
+            rate_controller=SimpleRateController(sleep_time=2),
         )
         
         # Try to load session if available
