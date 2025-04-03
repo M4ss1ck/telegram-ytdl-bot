@@ -46,7 +46,16 @@ class Bot:
                 return
 
             url = urls[0]
-            status_message = await message.reply_text("Downloading...")
+            is_instagram = 'instagram.com' in url or 'instagr.am' in url
+            
+            # Provide more specific status message for Instagram
+            if is_instagram:
+                status_message = await message.reply_text(
+                    "Processing Instagram content... This may take longer due to Instagram's restrictions."
+                )
+            else:
+                status_message = await message.reply_text("Downloading...")
+            
             file_path = None
 
             try:
@@ -74,12 +83,22 @@ class Bot:
                 os.remove(file_path)
 
             except asyncio.TimeoutError:
-                error_msg = "Download timed out"
+                error_msg = "Download timed out. Instagram may be rate-limiting requests."
                 logger.error(error_msg)
                 await self.send_error(message, error_msg)
             except Exception as e:
-                logger.error(f"Error processing URL {url}: {str(e)}", exc_info=True)
-                await self.send_error(message, f"Error: {str(e)}")
+                error_msg = str(e)
+                
+                # Provide more helpful error messages for Instagram
+                if is_instagram and "login_required" in error_msg.lower():
+                    error_msg = "This Instagram content requires login. Try using a different URL or content that's publicly accessible."
+                elif is_instagram and "private" in error_msg.lower():
+                    error_msg = "This Instagram content is private. Only public content can be downloaded."
+                elif is_instagram and "not available" in error_msg.lower():
+                    error_msg = "This Instagram content is no longer available or has been removed."
+                
+                logger.error(f"Error processing URL {url}: {error_msg}", exc_info=True)
+                await self.send_error(message, f"Error: {error_msg}")
             finally:
                 # Cleanup files only if they exist
                 if file_path and os.path.exists(file_path):
