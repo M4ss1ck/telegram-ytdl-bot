@@ -37,6 +37,26 @@ class Bot:
         @self.app.on_message(filters.command("ping"))
         async def ping(client, message):
             await message.reply_text("Pong!")
+            
+        @self.app.on_message(filters.command("help"))
+        async def help_cmd(client, message):
+            help_text = (
+                "📥 **YouTube Downloader Bot** 📥\n\n"
+                "Send me a URL from YouTube, Instagram, Spotify, or other supported sites, and I'll download it for you.\n\n"
+                "**Commands:**\n"
+                "/start - Start the bot\n"
+                "/ping - Check if bot is running\n"
+                "/help - Show this help message\n\n"
+                "**Supported Platforms:**\n"
+                "• YouTube (Videos, Shorts, Playlists)\n"
+                "• Instagram (Posts, Reels, Stories)\n"
+                "• Spotify (Tracks, Albums)\n"
+                "• Many other video platforms\n\n"
+                "**Note:** For YouTube content, we use multiple methods to ensure downloads work even if YouTube is blocked. "
+                "The quality may vary depending on the method used."
+            )
+            await message.reply_text(help_text)
+            
         @self.app.on_message(filters.text & ~filters.create(
             lambda _, __, m: m.text.startswith('/')
         ))
@@ -48,6 +68,7 @@ class Bot:
             url = urls[0]
             is_instagram = 'instagram.com' in url or 'instagr.am' in url
             is_spotify = 'spotify.com' in url or 'spotify:' in url
+            is_youtube = self.is_youtube_url(url)
             
             # Provide specific status message based on URL type
             if is_instagram:
@@ -57,6 +78,10 @@ class Bot:
             elif is_spotify:
                 status_message = await message.reply_text(
                     "Processing Spotify content... Converting to MP3."
+                )
+            elif is_youtube:
+                status_message = await message.reply_text(
+                    "Processing YouTube content... Using alternative download methods to bypass restrictions."
                 )
             else:
                 status_message = await message.reply_text("Downloading...")
@@ -84,6 +109,20 @@ class Bot:
                 elif is_spotify:
                     downloader_used = "yt-dlp (fallback)"
                     await status_message.edit_text("Spotify content downloaded with yt-dlp fallback. Preparing to upload...")
+                elif is_youtube:
+                    # For YouTube content, add more specific information
+                    if "API" in file_path or "_api_" in file_path:
+                        downloader_used = "YouTube API Service"
+                        await status_message.edit_text("YouTube content downloaded successfully using the API service. Preparing to upload...")
+                    elif "proxy" in file_path:
+                        downloader_used = "yt-dlp with proxy"
+                        await status_message.edit_text("YouTube content downloaded successfully using proxy. Preparing to upload...")
+                    elif "alt_" in file_path or "invidious" in file_path:
+                        downloader_used = "Alternate YouTube Frontend"
+                        await status_message.edit_text("YouTube content downloaded successfully using alternate frontend. Preparing to upload...")
+                    else:
+                        downloader_used = "yt-dlp"
+                        await status_message.edit_text("YouTube content downloaded successfully. Preparing to upload...")
                 else:
                     await status_message.edit_text("Download complete. Preparing to upload...")
 
@@ -110,6 +149,8 @@ class Bot:
                     error_msg += " Instagram may be rate-limiting requests."
                 elif is_spotify:
                     error_msg += " Spotify conversion may be taking longer than expected."
+                elif is_youtube:
+                    error_msg += " YouTube download took too long. Try again or try a different video."
                 logger.error(error_msg)
                 await self.send_error(message, error_msg)
             except Exception as e:
@@ -126,6 +167,8 @@ class Bot:
                     error_msg = "This Spotify content requires a premium account. Only publicly available tracks can be downloaded."
                 elif is_spotify and "region" in error_msg.lower():
                     error_msg = "This Spotify content is not available in your region."
+                elif is_youtube and ("block" in error_msg.lower() or "unavailable" in error_msg.lower()):
+                    error_msg = "YouTube content couldn't be accessed. All alternative methods failed. The video might be restricted or unavailable."
                 
                 logger.error(f"Error processing URL {url}: {error_msg}", exc_info=True)
                 await self.send_error(message, f"Error: {error_msg}")
@@ -138,6 +181,22 @@ class Bot:
                         logger.error(f"Error deleting file: {e}")
                 await status_message.delete()
 
+    def is_youtube_url(self, url):
+        """Check if the URL is from YouTube"""
+        youtube_patterns = [
+            r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
+            r'youtube\.com\/playlist\?list=([a-zA-Z0-9_-]+)',
+            r'youtube\.com\/channel\/([a-zA-Z0-9_-]+)',
+            r'youtube\.com\/user\/([a-zA-Z0-9_-]+)',
+            r'music\.youtube\.com\/',
+            r'youtube\.com\/shorts\/([a-zA-Z0-9_-]+)'
+        ]
+        
+        for pattern in youtube_patterns:
+            if re.search(pattern, url):
+                return True
+        return False
+                
     def extract_urls(self, text):
         """Improved URL extraction with basic validation"""
         url_pattern = r'https?://(?:www\.)?[^\s<>"]+|www\.[^\s<>"]+'
