@@ -103,30 +103,43 @@ class YouTubeAPIDownloader:
         if not self.has_rapidapi:
             raise Exception("RapidAPI key is not configured properly")
             
+        # Define the endpoint details
+        info_url = "https://youtube-mp36.p.rapidapi.com/dl"
+        host = "youtube-mp36.p.rapidapi.com"
+        params = {"id": video_id}
+        headers = {
+            "X-RapidAPI-Key": self.rapidapi_key,
+            "X-RapidAPI-Host": host
+        }
+        
         try:
-            # First get video info
-            info_url = "https://youtube-mp36.p.rapidapi.com/dl"
-            
-            headers = {
-                "X-RapidAPI-Key": self.rapidapi_key,
-                "X-RapidAPI-Host": "youtube-mp36.p.rapidapi.com"
-            }
-            
-            params = {"id": video_id}
-            
+            logger.info(f"Calling RapidAPI endpoint: {info_url} with host {host}")
             async with aiohttp.ClientSession() as session:
                 # First, get the download link
-                async with session.get(info_url, headers=headers, params=params) as response:
+                async with session.get(info_url, headers=headers, params=params, timeout=30) as response:
+                    logger.info(f"RapidAPI response status: {response.status}")
+                    response_text = await response.text() # Read response text for logging
+                    
                     if response.status != 200:
-                        raise Exception(f"API Error: {response.status} - {await response.text()}")
+                        logger.error(f"RapidAPI Error Response: {response_text}")
+                        raise Exception(f"API Error: {response.status} - {response_text}")
                     
-                    data = await response.json()
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        logger.error(f"RapidAPI returned non-JSON response: {response_text}")
+                        raise Exception("API returned invalid JSON")
                     
-                    if "link" not in data:
+                    logger.debug(f"RapidAPI response data: {data}")
+                    
+                    if "link" not in data or not data["link"]:
+                        logger.error(f"No download link found in RapidAPI response: {data}")
                         raise Exception(f"No download link in API response: {data}")
                     
                     download_url = data["link"]
                     title = data.get("title", f"youtube_{video_id}")
+                    
+                    logger.info(f"Successfully obtained download link from RapidAPI: {download_url}")
                     
                     # Prefix the title to indicate which method was used
                     title = f"API_{title}"
@@ -134,8 +147,15 @@ class YouTubeAPIDownloader:
                     # Download the file
                     return await self._download_file(download_url, title, "mp3")
         
+        except asyncio.TimeoutError:
+            logger.error(f"RapidAPI call timed out for {info_url}")
+            raise Exception("RapidAPI call timed out")
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP client error during RapidAPI call: {str(e)}")
+            raise Exception(f"HTTP error during API call: {str(e)}")
         except Exception as e:
-            logger.error(f"Error using RapidAPI YouTube service: {str(e)}")
+            logger.error(f"Error using RapidAPI YouTube service ({host}): {str(e)}")
+            # Re-raise the original exception to preserve context
             raise
     
     async def _download_with_custom_api(self, video_id):
@@ -143,32 +163,53 @@ class YouTubeAPIDownloader:
         if not self.has_custom_api:
             raise Exception("Custom API key or URL is not configured properly")
             
+        api_url = f"{self.base_url}/api/v1/download?videoId={video_id}&apiKey={self.api_key}"
+        
         try:
-            api_url = f"{self.base_url}/api/v1/download?videoId={video_id}&apiKey={self.api_key}"
-            
+            logger.info(f"Calling Custom API endpoint: {api_url}")
             async with aiohttp.ClientSession() as session:
                 # Get download information
-                async with session.get(api_url) as response:
+                async with session.get(api_url, timeout=30) as response:
+                    logger.info(f"Custom API response status: {response.status}")
+                    response_text = await response.text() # Read response text for logging
+
                     if response.status != 200:
-                        raise Exception(f"API Error: {response.status} - {await response.text()}")
+                        logger.error(f"Custom API Error Response: {response_text}")
+                        raise Exception(f"API Error: {response.status} - {response_text}")
                     
-                    data = await response.json()
-                    
-                    if "downloadUrl" not in data:
+                    try:
+                        data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        logger.error(f"Custom API returned non-JSON response: {response_text}")
+                        raise Exception("API returned invalid JSON")
+
+                    logger.debug(f"Custom API response data: {data}")
+
+                    if "downloadUrl" not in data or not data["downloadUrl"]:
+                        logger.error(f"No download URL found in Custom API response: {data}")
                         raise Exception(f"No download URL in API response: {data}")
                     
                     download_url = data["downloadUrl"]
                     title = data.get("title", f"youtube_{video_id}")
                     format_ext = data.get("format", "mp4")
                     
+                    logger.info(f"Successfully obtained download link from Custom API: {download_url}")
+
                     # Prefix the title to indicate which method was used
                     title = f"API_{title}"
                     
                     # Download the file
                     return await self._download_file(download_url, title, format_ext)
                     
+        except asyncio.TimeoutError:
+            logger.error(f"Custom API call timed out for {api_url}")
+            raise Exception("Custom API call timed out")
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP client error during Custom API call: {str(e)}")
+            raise Exception(f"HTTP error during API call: {str(e)}")
         except Exception as e:
             logger.error(f"Error using custom YouTube API: {str(e)}")
+            # Re-raise the original exception
             raise
     
     async def _download_via_public_api(self, original_url, video_id):

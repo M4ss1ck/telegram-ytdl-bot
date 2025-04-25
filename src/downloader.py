@@ -102,10 +102,10 @@ class Downloader:
                 self._try_browser_download
             ]
         else:
-            # Default strategy: try all methods in a sensible order
+            # Default strategy: Prioritize proxy and API, then alt frontends, then browser
             methods = [
-                self._try_api_download,
                 self._try_proxy_download,
+                self._try_api_download,
                 self._try_alternate_frontends,
                 self._try_browser_download
             ]
@@ -168,12 +168,31 @@ class Downloader:
         ydl_opts = self._get_base_ytdlp_options()
         ydl_opts['proxy'] = self.config.PROXY_URL
         
+        # Add extra options that might help when behind a proxy
+        ydl_opts['youtube_include_dash_manifest'] = False
+        ydl_opts['youtube_include_hls_manifest'] = False
+        # Consider adding cookie options if needed: ydl_opts['cookiesfrombrowser'] = ('firefox',) or ydl_opts['cookiefile'] = 'path/to/cookies.txt'
+        
         # Add "proxy" to filename to help identify the method used
         downloads_dir = self.config.downloads_dir
         ydl_opts['outtmpl'] = str(downloads_dir / 'proxy_%(title)s.%(ext)s')
         
         # Try the download
-        return await asyncio.to_thread(self._download_video, url, ydl_opts)
+        try:
+            return await asyncio.to_thread(self._download_video, url, ydl_opts)
+        except yt_dlp.utils.DownloadError as e:
+            error_msg = str(e)
+            logger.error(f"yt-dlp proxy download error: {error_msg}")
+            if "Failed to extract any player response" in error_msg:
+                raise Exception("Proxy download failed: YouTube blocked request even via proxy. The proxy IP might be flagged.")
+            elif "Sign in to confirm" in error_msg:
+                raise Exception("Proxy download failed: YouTube requires login/cookies even via proxy.")
+            else:
+                raise Exception(f"Proxy download failed with yt-dlp error: {error_msg}")
+        except Exception as e:
+            # Catch other potential errors during the threaded execution
+            logger.error(f"Unexpected error during proxy download: {str(e)}")
+            raise
     
     async def _try_browser_download(self, url):
         """Try downloading YouTube content via browser automation"""
