@@ -22,6 +22,9 @@ class Config:
         self.BROWSER_ENABLED = os.getenv('BROWSER_ENABLED', 'false').lower() == 'true'
         self.BROWSER_TYPE = os.getenv('BROWSER_TYPE', 'firefox')  # 'firefox' or 'chrome'
         
+        # Cookie file path (optional)
+        self.COOKIE_FILE_PATH = os.getenv('COOKIE_FILE_PATH', None)
+        
         # Specify YouTube download strategy preference
         # Options: 'api_first', 'proxy_first', 'alt_frontends_first', 'browser_first'
         self.YOUTUBE_STRATEGY = os.getenv('YOUTUBE_STRATEGY', 'api_first')

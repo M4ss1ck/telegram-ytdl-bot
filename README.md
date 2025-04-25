@@ -65,6 +65,7 @@ For browser-based YouTube downloads:
    - For Spotify support, you'll need to add your Spotify API credentials
    - For enhanced YouTube support, consider adding RapidAPI key or proxy settings
    - To enable browser automation, set `BROWSER_ENABLED=true` in your `.env` file
+   - To use cookies with yt-dlp methods, set `COOKIE_FILE_PATH` to the path of your cookies.txt file
 
 ## Usage
 
@@ -84,6 +85,7 @@ For browser-based YouTube downloads:
 - YouTube and other video platforms (via yt-dlp)
   - Enhanced YouTube support with API-based downloads, proxies, and alternate frontends
   - Browser-based downloads for heavily blocked regions
+  - Optional cookie support for yt-dlp methods to bypass login/bot checks
   - Multiple fallback mechanisms to handle blocked or restricted content
 - Instagram posts, reels, and stories (via Instaloader with yt-dlp fallback)
 - Spotify tracks, albums, and playlists (via specialized Spotify downloader)
@@ -92,11 +94,11 @@ For browser-based YouTube downloads:
 
 The bot uses a multi-layered approach to download YouTube content, especially useful when your server is located in a region where YouTube is blocked:
 
-1. **API-based Downloads**: Uses various public and premium APIs to download YouTube content without direct access to YouTube
-2. **Proxy Method**: If configured, uses a proxy to bypass regional restrictions
-3. **Browser Automation**: Uses headless browsers (Firefox/Chrome) to simulate a real user accessing YouTube
-4. **Alternative Frontends**: Uses Invidious and other alternative YouTube frontend instances to download videos
-5. **Direct Download**: Falls back to direct yt-dlp download as a last resort
+1. **API-based Downloads**: Uses various public and premium APIs (e.g., from RapidAPI) to download YouTube content without direct access to YouTube. The bot cycles through multiple known endpoints.
+2. **Proxy Method**: If configured (`PROXY_URL`), uses a proxy to bypass regional restrictions. Works best when combined with cookies.
+3. **Browser Automation**: Uses headless browsers (`BROWSER_ENABLED=true`) to simulate a real user accessing YouTube. Requires `playwright` or `selenium`.
+4. **Alternative Frontends**: Uses Invidious instances to download videos. Often requires cookies now.
+5. **Direct Download**: Falls back to direct yt-dlp download as a last resort (least likely to work if blocked).
 
 To enable these features, configure the appropriate options in your `.env` file:
 
@@ -105,8 +107,18 @@ To enable these features, configure the appropriate options in your `.env` file:
 RAPIDAPI_KEY=your_rapidapi_key          # For premium API service
 PROXY_URL=http://user:pass@proxy:port   # For proxy method
 BROWSER_ENABLED=true                    # For browser-based downloads
+COOKIE_FILE_PATH=/path/to/cookies.txt   # Optional: For yt-dlp methods
 YOUTUBE_STRATEGY=api_first              # Download method priority
 ```
+
+### Cookie Support
+
+If the proxy or alternate frontend methods fail with errors like "Sign in to confirm" or "Failed to extract player response", YouTube might require authentication cookies. You can provide these using the `COOKIE_FILE_PATH` setting:
+
+1.  **Export Cookies**: Use a browser extension like "Get cookies.txt" or "EditThisCookie" to export your YouTube cookies from a logged-in browser session into a Netscape-formatted `cookies.txt` file.
+2.  **Configure Path**: Place the `cookies.txt` file on your server and set the absolute path in `COOKIE_FILE_PATH` in your `.env` file.
+
+The bot will automatically use these cookies for `yt-dlp` based download methods (proxy and alternate frontends).
 
 ### Browser-based Downloads
 
@@ -123,7 +135,7 @@ This method is slower but more reliable in heavily restricted environments.
 The bot also supports several alternative API services for downloading YouTube content:
 
 1. **RapidAPI-based services**: Premium YouTube downloader APIs (requires API key)
-2. **Public YouTube downloaders**: Several free public APIs that don't require authentication
+2. **Public YouTube downloaders**: Several free public APIs that don't require authentication (often unreliable)
 3. **Custom API services**: Support for your own YouTube download API if you have one
 
 ## Additional Bypass Methods

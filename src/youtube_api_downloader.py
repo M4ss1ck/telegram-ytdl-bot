@@ -99,64 +99,166 @@ class YouTubeAPIDownloader:
         return None
     
     async def _download_via_rapidapi(self, video_id):
-        """Download using RapidAPI YouTube services"""
+        """Try multiple RapidAPI YouTube downloader services"""
         if not self.has_rapidapi:
             raise Exception("RapidAPI key is not configured properly")
             
-        # Define the endpoint details
-        info_url = "https://youtube-mp36.p.rapidapi.com/dl"
-        host = "youtube-mp36.p.rapidapi.com"
-        params = {"id": video_id}
-        headers = {
-            "X-RapidAPI-Key": self.rapidapi_key,
-            "X-RapidAPI-Host": host
-        }
+        # List of RapidAPI YouTube endpoints to try
+        # Add more endpoints here as you find/subscribe to them
+        endpoints = [
+            {
+                "url": "https://youtube-video-download-info.p.rapidapi.com/dl",
+                "host": "youtube-video-download-info.p.rapidapi.com",
+                "params": {"id": video_id},
+                "parser": self._parse_rapidapi_type1
+            },
+            {
+                "url": "https://youtube-media-downloader.p.rapidapi.com/v2/video/details",
+                "host": "youtube-media-downloader.p.rapidapi.com",
+                "params": {"videoId": video_id},
+                "parser": self._parse_rapidapi_type3
+            },
+            {
+                # This endpoint might require polling or fails for some videos
+                "url": "https://youtube-mp36.p.rapidapi.com/dl",
+                "host": "youtube-mp36.p.rapidapi.com",
+                "params": {"id": video_id},
+                "parser": self._parse_rapidapi_type2 
+            }
+            # Add more potential endpoints from RapidAPI here
+        ]
         
-        try:
-            logger.info(f"Calling RapidAPI endpoint: {info_url} with host {host}")
-            async with aiohttp.ClientSession() as session:
-                # First, get the download link
-                async with session.get(info_url, headers=headers, params=params, timeout=30) as response:
-                    logger.info(f"RapidAPI response status: {response.status}")
-                    response_text = await response.text() # Read response text for logging
-                    
-                    if response.status != 200:
-                        logger.error(f"RapidAPI Error Response: {response_text}")
-                        raise Exception(f"API Error: {response.status} - {response_text}")
-                    
-                    try:
-                        data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        logger.error(f"RapidAPI returned non-JSON response: {response_text}")
-                        raise Exception("API returned invalid JSON")
-                    
-                    logger.debug(f"RapidAPI response data: {data}")
-                    
-                    if "link" not in data or not data["link"]:
-                        logger.error(f"No download link found in RapidAPI response: {data}")
-                        raise Exception(f"No download link in API response: {data}")
-                    
-                    download_url = data["link"]
-                    title = data.get("title", f"youtube_{video_id}")
-                    
-                    logger.info(f"Successfully obtained download link from RapidAPI: {download_url}")
-                    
-                    # Prefix the title to indicate which method was used
-                    title = f"API_{title}"
-                    
-                    # Download the file
-                    return await self._download_file(download_url, title, "mp3")
+        last_error = None
+        for endpoint in endpoints:
+            host = endpoint["host"]
+            info_url = endpoint["url"]
+            params = endpoint["params"]
+            parser = endpoint["parser"]
+            headers = {
+                "X-RapidAPI-Key": self.rapidapi_key,
+                "X-RapidAPI-Host": host
+            }
+            
+            try:
+                logger.info(f"Calling RapidAPI endpoint: {info_url} with host {host}")
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(info_url, headers=headers, params=params, timeout=45) as response:
+                        logger.info(f"RapidAPI ({host}) response status: {response.status}")
+                        response_text = await response.text() # Read response text for logging
+                        
+                        if response.status != 200:
+                            logger.error(f"RapidAPI ({host}) Error Response: {response_text}")
+                            raise Exception(f"API Error {response.status} from {host}")
+                        
+                        try:
+                            data = json.loads(response_text)
+                        except json.JSONDecodeError:
+                            logger.error(f"RapidAPI ({host}) returned non-JSON response: {response_text[:200]}...")
+                            raise Exception(f"API ({host}) returned invalid JSON")
+                        
+                        logger.debug(f"RapidAPI ({host}) response data: {data}")
+                        
+                        # Use the specific parser for this endpoint's response structure
+                        download_info = parser(data, video_id)
+                        
+                        if not download_info or not download_info.get("url"):
+                             logger.error(f"Parser failed or no download link from {host} response: {data}")
+                             raise Exception(f"No valid download link parsed from {host}")
+                        
+                        logger.info(f"Successfully obtained download info from RapidAPI ({host}): URL starts with {download_info['url'][:30]}...")
+                        
+                        # Prefix the title to indicate which method was used
+                        title = f"API_{host}_{download_info['title']}"
+                        
+                        # Download the file
+                        return await self._download_file(download_info["url"], title, download_info["format"])
+                        
+            except asyncio.TimeoutError:
+                last_error = Exception(f"RapidAPI call timed out for {host}")
+                logger.error(f"RapidAPI call timed out for {host}")
+            except aiohttp.ClientError as e:
+                last_error = Exception(f"HTTP error during API call to {host}: {str(e)}")
+                logger.error(f"HTTP client error during RapidAPI call ({host}): {str(e)}")
+            except Exception as e:
+                # Catch parsing errors or other issues
+                last_error = e # Keep the specific error (e.g., no link found)
+                logger.error(f"Error processing response from RapidAPI {host}: {str(e)}")
+                # Continue to the next endpoint
+                continue
         
-        except asyncio.TimeoutError:
-            logger.error(f"RapidAPI call timed out for {info_url}")
-            raise Exception("RapidAPI call timed out")
-        except aiohttp.ClientError as e:
-            logger.error(f"HTTP client error during RapidAPI call: {str(e)}")
-            raise Exception(f"HTTP error during API call: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error using RapidAPI YouTube service ({host}): {str(e)}")
-            # Re-raise the original exception to preserve context
-            raise
+        # If all endpoints fail, raise the last recorded error
+        if last_error:
+            logger.error(f"All RapidAPI endpoints failed. Last error: {str(last_error)}")
+            raise last_error
+        else:
+            # Should not happen if endpoints list is not empty, but safeguard
+            raise Exception("All RapidAPI endpoints failed for unknown reasons")
+
+    # --- RapidAPI Response Parsers --- 
+    # Add more parsers if you subscribe to APIs with different response structures
+
+    def _parse_rapidapi_type1(self, data, video_id):
+        """Parse result from APIs like youtube-video-download-info"""
+        formats = data.get("formats")
+        if not formats:
+            return None
+        
+        # Prioritize MP4 with audio, then best MP4, then best audio
+        mp4_audio_formats = [f for f in formats if f.get("ext") == "mp4" and f.get("acodec") != "none"]
+        if mp4_audio_formats:
+            best_format = sorted(mp4_audio_formats, key=lambda x: x.get("height", 0), reverse=True)[0]
+            fmt = "mp4"
+        else:
+            # Fallback or handle audio-only if needed
+            return None # Or implement audio extraction logic
+            
+        title = data.get("title", f"youtube_{video_id}")
+        url = best_format.get("url")
+        
+        return {"url": url, "title": title, "format": fmt} if url else None
+
+    def _parse_rapidapi_type2(self, data, video_id):
+        """Parse result from APIs like youtube-mp36 (handles 'processing' status)"""
+        if data.get("status") == "processing" or not data.get("link"):
+            logger.warning(f"RapidAPI youtube-mp36 returned status: {data.get('status', 'N/A')}, msg: {data.get('msg', 'N/A')}. Link not ready.")
+            return None # Indicate link is not ready or invalid
+        
+        title = data.get("title", f"youtube_{video_id}")
+        url = data.get("link")
+        # This specific API seems to usually return mp3
+        fmt = "mp3"
+        
+        return {"url": url, "title": title, "format": fmt} if url else None
+
+    def _parse_rapidapi_type3(self, data, video_id):
+        """Parse result from APIs like youtube-media-downloader"""
+        videos = data.get("videos")
+        if not videos or not isinstance(videos, list) or len(videos) == 0:
+             return None
+             
+        # Find the best quality MP4 format
+        best_video = None
+        max_quality = 0
+        for video in videos:
+            if video.get("container") == "mp4" and video.get("audio"): # Check for audio stream
+                try:
+                    quality = int(video.get("qualityLabel", "0p").replace("p", ""))
+                    if quality > max_quality:
+                         max_quality = quality
+                         best_video = video
+                except ValueError:
+                    continue # Ignore formats with non-numeric quality labels
+        
+        if not best_video:
+             return None
+             
+        title = data.get("meta", {}).get("title", f"youtube_{video_id}")
+        url = best_video.get("url")
+        fmt = "mp4"
+        
+        return {"url": url, "title": title, "format": fmt} if url else None
+
+    # --- End Parsers ---
     
     async def _download_with_custom_api(self, video_id):
         """Download using a custom YouTube API (if you have your own service)"""

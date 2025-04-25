@@ -267,7 +267,7 @@ class Downloader:
     
     def _get_base_ytdlp_options(self):
         """Get base yt-dlp options for YouTube downloads"""
-        return {
+        opts = {
             'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'merge_output_format': 'mp4',
             'quiet': True,
@@ -290,6 +290,15 @@ class Downloader:
                 'preferedformat': 'mp4',
             }],
         }
+        
+        # Add cookie file if configured and exists
+        if self.config.COOKIE_FILE_PATH and os.path.exists(self.config.COOKIE_FILE_PATH):
+            logger.info(f"Using cookie file: {self.config.COOKIE_FILE_PATH}")
+            opts['cookiefile'] = self.config.COOKIE_FILE_PATH
+        elif self.config.COOKIE_FILE_PATH:
+            logger.warning(f"Cookie file specified but not found: {self.config.COOKIE_FILE_PATH}")
+            
+        return opts
     
     async def _download_with_ytdlp(self, url, is_instagram=False, is_spotify=False, is_youtube=False):
         """Download using yt-dlp with appropriate options"""
