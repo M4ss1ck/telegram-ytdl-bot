@@ -215,10 +215,10 @@ class SpotifyDownloader:
                             title = track_info['name']
                             safe_artist = re.sub(r'[^\w\s-]', '', artist)
                             safe_title = re.sub(r'[^\w\s-]', '', title)
-                            target_file = self.config.downloads_dir / f"spotify_{safe_artist}_{safe_title}.mp3"
+                            target_file = self.config.downloads_dir / f"{safe_artist}_{safe_title}.mp3"
                         else:
-                            # Use the original filename
-                            target_file = self.config.downloads_dir / f"spotify_{spotify_id}.mp3"
+                            # Use the original filename without spotify prefix
+                            target_file = self.config.downloads_dir / f"{spotify_id}.mp3"
                         
                         # Rename the file
                         os.rename(file_path, target_file)
