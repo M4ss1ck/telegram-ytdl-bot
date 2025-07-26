@@ -13,6 +13,8 @@ class Config:
         self.BOT_TOKEN = os.getenv('BOT_TOKEN')
         self.DOWNLOAD_TIMEOUT = int(os.getenv('DOWNLOAD_TIMEOUT', 600))
         self.MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 1.9 * 1024 * 1024 * 1024))
+        # Group file size limit (default 500MB)
+        self.GROUP_MAX_FILE_SIZE = int(os.getenv('GROUP_MAX_FILE_SIZE', 500 * 1024 * 1024))
         self.LAST_PROGRESS = 0.0
         
         # Cookie file path (optional)

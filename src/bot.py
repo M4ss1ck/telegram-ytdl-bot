@@ -43,6 +43,9 @@ class Bot:
         @self.app.on_message(filters.command("help"))
         async def help_cmd(client, message):
             logger.info(f"Received /help command from user {message.from_user.id}")
+            is_group = message.chat.type in ["group", "supergroup"]
+            group_limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
+            
             help_text = (
                 "📥 **YouTube Downloader Bot** 📥\n\n"
                 "Send me a URL from YouTube, Instagram, Spotify, or other supported sites, and I'll download it for you.\n\n"
@@ -55,8 +58,17 @@ class Bot:
                 "• Instagram (Posts, Reels, Stories)\n"
                 "• Spotify (Tracks, Albums)\n"
                 "• Many other video platforms\n\n"
-                "**Note:** All downloads are processed using yt-dlp for reliable and consistent quality."
             )
+            
+            if is_group:
+                help_text += (
+                    f"**📊 Group Limits:**\n"
+                    f"• File size limit: {group_limit_mb:.0f}MB\n"
+                    f"• For larger files, use the bot in private chat\n\n"
+                )
+            
+            help_text += "**Note:** All downloads are processed using yt-dlp for reliable and consistent quality."
+            
             await message.reply_text(help_text)
             
         @self.app.on_message(filters.text & ~filters.create(
@@ -72,6 +84,34 @@ class Bot:
             is_instagram = 'instagram.com' in url or 'instagr.am' in url
             is_spotify = 'spotify.com' in url or 'spotify:' in url
             is_youtube = self.is_youtube_url(url)
+            is_group = message.chat.type in ["group", "supergroup"]
+            
+            # Check file size for groups (only for standard downloads that support size checking)
+            if is_group and not is_instagram and not is_spotify:
+                try:
+                    status_message = await message.reply_text("Checking file size...")
+                    file_info = await self.downloader.get_file_info(url)
+                    
+                    if file_info['file_size'] > self.config.GROUP_MAX_FILE_SIZE:
+                        size_mb = file_info['file_size'] / (1024 * 1024)
+                        limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
+                        await status_message.edit_text(
+                            f"❌ File too large for group chats!\n\n"
+                            f"📁 **{file_info['title']}**\n"
+                            f"📊 Size: {size_mb:.1f}MB\n"
+                            f"🚫 Group limit: {limit_mb:.0f}MB\n\n"
+                            f"💡 Try this link in a private chat with the bot for larger files."
+                        )
+                        return
+                    else:
+                        await status_message.delete()
+                except Exception as e:
+                    logger.warning(f"Failed to check file size for group: {e}")
+                    # Continue with download if size check fails
+                    try:
+                        await status_message.delete()
+                    except:
+                        pass
             
             # Provide specific status message based on URL type
             if is_instagram:

@@ -13,6 +13,74 @@ class Downloader:
         self.config = config
         self.instagram_downloader = InstagramDownloader(config)
         self.spotify_downloader = SpotifyDownloader(config)
+    
+    async def get_file_info(self, url):
+        """Get file information including size without downloading"""
+        try:
+            # Base options for info extraction
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'ignoreerrors': False,
+                'no_color': True,
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            }
+            
+            # Add general headers
+            ydl_opts['http_headers'] = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+            }
+            
+            # Add cookie file if configured and exists
+            if self.config.COOKIE_FILE_PATH and os.path.exists(self.config.COOKIE_FILE_PATH):
+                ydl_opts['cookiefile'] = self.config.COOKIE_FILE_PATH
+            
+            return await asyncio.to_thread(self._extract_info, url, ydl_opts)
+        except Exception as e:
+            logger.error(f"Failed to extract info for {url}: {str(e)}")
+            raise Exception(f"Failed to get file info: {str(e)}")
+    
+    def _extract_info(self, url, ydl_opts):
+        """Extract file information using yt-dlp"""
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                
+                if not info:
+                    raise Exception("Could not extract information from URL")
+                
+                # Get file size (in bytes)
+                file_size = 0
+                if 'filesize' in info and info['filesize']:
+                    file_size = info['filesize']
+                elif 'filesize_approx' in info and info['filesize_approx']:
+                    file_size = info['filesize_approx']
+                elif 'requested_formats' in info:
+                    # For merged formats, sum up the sizes
+                    for fmt in info['requested_formats']:
+                        if 'filesize' in fmt and fmt['filesize']:
+                            file_size += fmt['filesize']
+                        elif 'filesize_approx' in fmt and fmt['filesize_approx']:
+                            file_size += fmt['filesize_approx']
+                
+                return {
+                    'title': info.get('title', 'Unknown'),
+                    'duration': info.get('duration', 0),
+                    'file_size': file_size,
+                    'uploader': info.get('uploader', 'Unknown'),
+                    'url': url
+                }
+        except yt_dlp.utils.DownloadError as e:
+            logger.error(f"yt-dlp info extraction error: {str(e)}")
+            raise Exception(f"Info extraction error: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error during info extraction: {str(e)}")
+            raise
         
     def is_youtube_url(self, url):
         """Check if the URL is from YouTube"""

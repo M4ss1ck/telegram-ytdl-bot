@@ -10,6 +10,7 @@ This project is a Telegram bot that allows users to download content from variou
 - Spotify music download support with high-quality MP3 conversion
 - Easy to use Telegram bot interface
 - Configurable settings for the bot
+- Group file size limits to prevent large files in group chats (default: 500MB limit)
 
 ## Requirements
 
@@ -66,6 +67,7 @@ For browser-based YouTube downloads:
    - For enhanced YouTube support, consider adding RapidAPI key or proxy settings
    - To enable browser automation, set `BROWSER_ENABLED=true` in your `.env` file
    - To use cookies with yt-dlp methods, set `COOKIE_FILE_PATH` to the path of your cookies.txt file
+   - To configure group file size limits, set `GROUP_MAX_FILE_SIZE` (default: 500MB)
 
 ## Usage
 
@@ -129,6 +131,31 @@ The browser-based approach simulates a real browser visiting YouTube or a YouTub
 3. Setting `BROWSER_ENABLED=true` in your `.env` file
 
 This method is slower but more reliable in heavily restricted environments.
+
+## Group File Size Limits
+
+The bot includes a feature to limit file downloads in group chats to prevent large files from being shared inappropriately:
+
+- **Default Limit**: 500MB for group and supergroup chats
+- **Private Chats**: No size restrictions (uses the standard `MAX_FILE_SIZE` limit)
+- **Size Check**: The bot checks file size before downloading to avoid wasting resources
+- **User Feedback**: When a file exceeds the group limit, users are informed and directed to use the bot in private chat
+
+### Configuration
+
+Set the group file size limit using the `GROUP_MAX_FILE_SIZE` environment variable:
+
+```
+GROUP_MAX_FILE_SIZE=524288000  # 500MB in bytes (default)
+GROUP_MAX_FILE_SIZE=104857600  # 100MB in bytes
+GROUP_MAX_FILE_SIZE=1073741824 # 1GB in bytes
+```
+
+### Behavior
+
+- **Instagram/Spotify**: Size limits are not enforced for Instagram and Spotify downloads as their downloaders don't provide reliable size information before download
+- **YouTube/Other platforms**: Size is checked before download using yt-dlp's info extraction
+- **Fallback**: If size checking fails, the download proceeds normally
 
 ### Alternative API Methods
 
