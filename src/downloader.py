@@ -25,7 +25,7 @@ class Downloader:
                 'nocheckcertificate': True,
                 'ignoreerrors': False,
                 'no_color': True,
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
             }
             
             # Add general headers
@@ -131,13 +131,13 @@ class Downloader:
         # Base options for all downloads
         ydl_opts = {
             'outtmpl': str(self.config.downloads_dir / '%(title)s.%(ext)s'),
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,
             'nocheckcertificate': True,
-            'ignoreerrors': True,
+            'ignoreerrors': False,
             'no_color': True,
             'retries': 10,
             'fragment_retries': 10,
@@ -204,30 +204,34 @@ class Downloader:
     def _download_video(self, url, ydl_opts):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # First extract info to validate URL
-                info = ydl.extract_info(url, download=False)
-                
-                # Check if we got valid info
+                # Single call: extract info and download in one step
+                info = ydl.extract_info(url, download=True)
+
                 if not info:
                     raise Exception("Could not extract information from URL")
-                
-                # Now download the video
-                ydl.download([url])
-                
-                # Get the filename
+
+                # Get the expected filename
                 filename = ydl.prepare_filename(info)
-                
+
                 # Handle audio files (for Spotify)
                 if 'FFmpegExtractAudio' in [p['key'] for p in ydl_opts.get('postprocessors', [])]:
                     base_filename = os.path.splitext(filename)[0]
                     file_path = f"{base_filename}.mp3"
                 else:
                     file_path = filename
-                
+                    # Post-processors may change the extension (e.g. webm -> mp4)
+                    if not os.path.exists(file_path):
+                        base = os.path.splitext(filename)[0]
+                        for ext in ['.mp4', '.mkv', '.webm']:
+                            candidate = f"{base}{ext}"
+                            if os.path.exists(candidate):
+                                file_path = candidate
+                                break
+
                 # Verify file exists and has content
                 if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
                     raise Exception("Downloaded file is empty or does not exist")
-                
+
                 return file_path
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"yt-dlp download error: {str(e)}")

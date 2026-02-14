@@ -1,4 +1,5 @@
 from pyrogram import Client, filters
+from pyrogram.errors import FloodWait
 import os
 import asyncio
 import re
@@ -22,7 +23,6 @@ class Bot:
             bot_token=self.config.BOT_TOKEN
         )
         self.active_uploads = {}  # Track active uploads for progress throttling
-        self.last_progress = self.config.LAST_PROGRESS
 
         # Register handlers
         self.register_handlers()
@@ -75,7 +75,8 @@ class Bot:
             lambda _, __, m: m.text.startswith('/')
         ))
         async def handle_url(client, message):
-            logger.info(f"Received message from user {message.from_user.id}: {message.text[:50]}...")
+            text_preview = str(message.text or "")[:50]
+            logger.info(f"Received message from user {message.from_user.id}: {text_preview}...")
             urls = self.extract_urls(message.text)
             if not urls:
                 return
@@ -86,30 +87,41 @@ class Bot:
             is_youtube = self.is_youtube_url(url)
             is_group = message.chat.type in ["group", "supergroup"]
             
-            # Check file size for groups (only for standard downloads that support size checking)
+            # Pre-download size check for groups (when yt-dlp estimates are available)
             if is_group and not is_instagram and not is_spotify:
                 try:
-                    status_message = await message.reply_text("Checking file size...")
+                    pre_check_message = await message.reply_text("🔍 Checking file size before download...")
                     file_info = await self.downloader.get_file_info(url)
                     
-                    if file_info['file_size'] > self.config.GROUP_MAX_FILE_SIZE:
-                        size_mb = file_info['file_size'] / (1024 * 1024)
+                    # Only skip download if we have a size estimate and it's significantly over the limit
+                    # Add 10% buffer to account for yt-dlp estimate inaccuracies
+                    estimated_size = file_info.get('file_size', 0)
+                    size_threshold = self.config.GROUP_MAX_FILE_SIZE * 1.1  # 10% buffer
+                    
+                    if estimated_size > 0 and estimated_size > size_threshold:
+                        size_mb = estimated_size / (1024 * 1024)
                         limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
-                        await status_message.edit_text(
-                            f"❌ File too large for group chats!\n\n"
-                            f"📁 **{file_info['title']}**\n"
-                            f"📊 Size: {size_mb:.1f}MB\n"
-                            f"🚫 Group limit: {limit_mb:.0f}MB\n\n"
-                            f"💡 Try this link in a private chat with the bot for larger files."
-                        )
+                        
+                        # Just delete the message silently in groups
+                        await pre_check_message.delete()
+                        
+                        # Log the rejection for debugging
+                        logger.info(f"Pre-download check: File too large for group. "
+                                   f"Estimated: {size_mb:.1f}MB > {limit_mb:.0f}MB limit")
                         return
                     else:
-                        await status_message.delete()
+                        # Size is acceptable or unknown - proceed with download
+                        await pre_check_message.delete()
+                        if estimated_size > 0:
+                            logger.info(f"Pre-download check passed. Estimated size: {estimated_size/1024/1024:.1f}MB")
+                        else:
+                            logger.info("Pre-download check: no size estimate available, proceeding with download")
+                            
                 except Exception as e:
-                    logger.warning(f"Failed to check file size for group: {e}")
-                    # Continue with download if size check fails
+                    logger.warning(f"Pre-download size check failed: {e}")
+                    # If pre-check fails, continue with download and rely on post-download check
                     try:
-                        await status_message.delete()
+                        await pre_check_message.delete()
                     except:
                         pass
             
@@ -160,6 +172,31 @@ class Bot:
                     raise ValueError("Download failed - no file created")
 
                 file_size = os.path.getsize(file_path)
+                
+                # Check file size limit for groups AFTER download (using actual file size)
+                if is_group and file_size > self.config.GROUP_MAX_FILE_SIZE:
+                    size_mb = file_size / (1024 * 1024)
+                    limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
+                    
+                    # Get file title for logging
+                    file_name = os.path.basename(file_path)
+                    title = os.path.splitext(file_name)[0] if file_name else "Downloaded file"
+                    
+                    # Just delete the message silently in groups
+                    await status_message.delete()
+                    
+                    # Log the rejection for debugging
+                    logger.info(f"Post-download check: File too large for group. "
+                               f"Actual: {size_mb:.1f}MB > {limit_mb:.0f}MB limit. File: {title}")
+                    
+                    # Clean up the downloaded file since we can't upload it
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        logger.error(f"Error deleting oversized file: {e}")
+                    return
+                
+                # Check overall file size limit (for both groups and private chats)
                 if file_size > self.config.MAX_FILE_SIZE:
                     raise ValueError(f"File too large ({file_size/1024/1024:.1f}MB > "
                                     f"{self.config.MAX_FILE_SIZE/1024/1024}MB")
@@ -208,7 +245,12 @@ class Bot:
                         os.remove(file_path)
                     except Exception as e:
                         logger.error(f"Error deleting file: {e}")
-                await status_message.delete()
+                # Safely delete status message if it still exists
+                try:
+                    await status_message.delete()
+                except Exception as e:
+                    # Message may have already been deleted, which is fine
+                    logger.debug(f"Status message already deleted or couldn't be deleted: {e}")
 
     def is_youtube_url(self, url):
         """Check if the URL is from YouTube"""
@@ -247,11 +289,13 @@ class Bot:
         return valid_urls
 
     async def upload_file(self, message, file_path, status_message):
-        """Handle file upload with progress throttling"""
+        """Handle file upload with progress tracking and status messages"""
         try:
-            # Use list for mutable start time
-            progress_args = (status_message, [asyncio.get_event_loop().time()])
-            
+            await status_message.edit_text("Starting upload...")
+
+            # tracking_data: [last_update_time, stop_progress_flag]
+            progress_args = (status_message, [asyncio.get_event_loop().time(), False])
+
             if file_path.endswith(('.mp4', '.mkv', '.webm')):
                 await message.reply_video(
                     video=file_path,
@@ -265,32 +309,47 @@ class Bot:
                     progress=self._upload_progress,
                     progress_args=progress_args
                 )
+
+            await status_message.edit_text("Upload completed!")
+
+        except FloodWait as e:
+            logger.warning(f"FloodWait during upload, waiting {e.value} seconds before retry...")
+            await asyncio.sleep(e.value)
+            # Retry without progress updates to avoid further flood
+            try:
+                if file_path.endswith(('.mp4', '.mkv', '.webm')):
+                    await message.reply_video(video=file_path, supports_streaming=True)
+                else:
+                    await message.reply_document(document=file_path)
+                await status_message.edit_text("Upload completed!")
+            except Exception as retry_e:
+                logger.error(f"Upload retry failed: {retry_e}")
+                raise
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             raise
 
-    async def _upload_progress(self, current, total, status_message, start_time):
-        """Throttled progress updates"""
+    async def _upload_progress(self, current, total, status_message, tracking_data):
+        """Throttled progress updates - max once every 5 seconds"""
         try:
-            now = asyncio.get_event_loop().time()
-            elapsed = now - start_time[0]
-            
-            # Calculate current progress ratio
-            current_progress = current / total
-            
-            # Update at most every 2 seconds or when 5% progress is made
-            if elapsed < 2 and (current_progress - self.last_progress) < 0.05:
+            if tracking_data[1]:  # stop flag set after flood
                 return
-            
-            # Update tracking variables
-            self.last_progress = current_progress
-            start_time[0] = now
-            
-            percent = current_progress * 100
+
+            now = asyncio.get_event_loop().time()
+            elapsed = now - tracking_data[0]
+
+            if elapsed < 5:
+                return
+
+            tracking_data[0] = now
+
+            percent = (current / total) * 100
             await status_message.edit_text(
-                f"Uploading: {percent:.1f}%\n"
-                f"Size: {current//1024}KB/{total//1024}KB"
+                f"Uploading: {percent:.0f}%  ({current//(1024*1024)}MB / {total//(1024*1024)}MB)"
             )
+        except FloodWait:
+            tracking_data[1] = True  # Stop all future progress updates
+            logger.warning("FloodWait during progress update, disabling further updates")
         except Exception as e:
             logger.warning(f"Progress update failed: {e}")
 
