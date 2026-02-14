@@ -2,7 +2,6 @@ import os
 import logging
 import instaloader
 import re
-from pathlib import Path
 import asyncio
 import time
 

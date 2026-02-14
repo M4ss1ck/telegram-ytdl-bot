@@ -5,8 +5,6 @@ import asyncio
 import yt_dlp
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
-from pathlib import Path
-import urllib.parse
 import random
 
 logger = logging.getLogger(__name__)
@@ -36,28 +34,18 @@ class SpotifyDownloader:
     
     def _extract_spotify_id(self, url):
         """Extract the Spotify ID from a URL"""
-        # Parse URL to handle query parameters
-        parsed_url = urllib.parse.urlparse(url)
-        
-        # Handle different Spotify URL formats
         patterns = [
-            r'spotify\.com/track/([a-zA-Z0-9]+)',
-            r'spotify\.com/album/([a-zA-Z0-9]+)',
-            r'spotify\.com/playlist/([a-zA-Z0-9]+)',
-            r'spotify\.com/artist/([a-zA-Z0-9]+)',
-            # Add support for regional URLs with /intl-xx/ in the path
-            r'spotify\.com/intl-[a-z]{2}/track/([a-zA-Z0-9]+)',
-            r'spotify\.com/intl-[a-z]{2}/album/([a-zA-Z0-9]+)',
-            r'spotify\.com/intl-[a-z]{2}/playlist/([a-zA-Z0-9]+)',
-            r'spotify\.com/intl-[a-z]{2}/artist/([a-zA-Z0-9]+)',
+            r'spotify\.com/(?:intl-[a-z]{2}/)?track/([a-zA-Z0-9]+)',
+            r'spotify\.com/(?:intl-[a-z]{2}/)?album/([a-zA-Z0-9]+)',
+            r'spotify\.com/(?:intl-[a-z]{2}/)?playlist/([a-zA-Z0-9]+)',
+            r'spotify\.com/(?:intl-[a-z]{2}/)?artist/([a-zA-Z0-9]+)',
         ]
-        
-        path = parsed_url.path
+
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:
                 return match.group(1)
-        
+
         return None
     
     def _create_youtube_search_query(self, track_info, variation=0):

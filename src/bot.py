@@ -22,8 +22,6 @@ class Bot:
             api_hash=self.config.API_HASH,
             bot_token=self.config.BOT_TOKEN
         )
-        self.active_uploads = {}  # Track active uploads for progress throttling
-
         # Register handlers
         self.register_handlers()
 
@@ -84,7 +82,7 @@ class Bot:
             url = urls[0]
             is_instagram = 'instagram.com' in url or 'instagr.am' in url
             is_spotify = 'spotify.com' in url or 'spotify:' in url
-            is_youtube = self.is_youtube_url(url)
+            is_youtube = self.downloader.is_youtube_url(url)
             is_group = message.chat.type in ["group", "supergroup"]
             
             # Pre-download size check for groups (when yt-dlp estimates are available)
@@ -142,7 +140,6 @@ class Bot:
                 status_message = await message.reply_text("Downloading...")
             
             file_path = None
-            downloader_used = "yt-dlp"
 
             try:
                 # Download with timeout
@@ -151,21 +148,7 @@ class Bot:
                     timeout=self.config.DOWNLOAD_TIMEOUT
                 )
                 
-                # Check which downloader was used based on the file path
-                if is_instagram and "instagram_" in file_path:
-                    downloader_used = "Instaloader"
-                    await status_message.edit_text("Instagram content downloaded successfully with Instaloader. Preparing to upload...")
-                elif is_instagram:
-                    downloader_used = "yt-dlp (fallback)"
-                    await status_message.edit_text("Instagram content downloaded with yt-dlp fallback. Preparing to upload...")
-                elif is_spotify and any(keyword in file_path for keyword in ["spotify_", "_"]):
-                    downloader_used = "Spotify Downloader"
-                    await status_message.edit_text("Spotify content downloaded successfully. Preparing to upload...")
-                elif is_spotify:
-                    downloader_used = "yt-dlp (fallback)"
-                    await status_message.edit_text("Spotify content downloaded with yt-dlp fallback. Preparing to upload...")
-                else:
-                    await status_message.edit_text("Download complete. Preparing to upload...")
+                await status_message.edit_text("Download complete. Preparing to upload...")
 
                 # Validate downloaded file
                 if not file_path or not os.path.exists(file_path):
@@ -252,22 +235,6 @@ class Bot:
                     # Message may have already been deleted, which is fine
                     logger.debug(f"Status message already deleted or couldn't be deleted: {e}")
 
-    def is_youtube_url(self, url):
-        """Check if the URL is from YouTube"""
-        youtube_patterns = [
-            r'(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-            r'youtube\.com\/playlist\?list=([a-zA-Z0-9_-]+)',
-            r'youtube\.com\/channel\/([a-zA-Z0-9_-]+)',
-            r'youtube\.com\/user\/([a-zA-Z0-9_-]+)',
-            r'music\.youtube\.com\/',
-            r'youtube\.com\/shorts\/([a-zA-Z0-9_-]+)'
-        ]
-        
-        for pattern in youtube_patterns:
-            if re.search(pattern, url):
-                return True
-        return False
-                
     def extract_urls(self, text):
         """Improved URL extraction with basic validation"""
         url_pattern = r'https?://(?:www\.)?[^\s<>"]+|www\.[^\s<>"]+'

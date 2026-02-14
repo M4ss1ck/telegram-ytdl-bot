@@ -6,9 +6,3 @@ browser-cookie3>=0.19.1
 ffmpeg-python>=0.2.0
 instaloader>=4.10.0
 spotipy>=2.23.0
-aiohttp>=3.8.0
-
-# Optional dependencies for browser automation (uncomment to use browser downloader)
-# playwright>=1.32.0
-# selenium>=4.8.0
-# webdriver-manager>=3.8.5
