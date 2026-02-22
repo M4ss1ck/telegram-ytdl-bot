@@ -10,7 +10,7 @@ This project is a Telegram bot that allows users to download content from variou
 - Spotify music download support with high-quality MP3 conversion
 - Easy to use Telegram bot interface
 - Configurable settings for the bot
-- Group file size limits to prevent large files in group chats (default: 500MB limit)
+- Group file size limits to prevent large files in group chats (default: 300MB limit)
 
 ## Requirements
 
@@ -67,7 +67,7 @@ For browser-based YouTube downloads:
    - For enhanced YouTube support, consider adding RapidAPI key or proxy settings
    - To enable browser automation, set `BROWSER_ENABLED=true` in your `.env` file
    - To use cookies with yt-dlp methods, set `COOKIE_FILE_PATH` to the path of your cookies.txt file
-   - To configure group file size limits, set `GROUP_MAX_FILE_SIZE` (default: 500MB)
+   - To configure group file size limits, set `GROUP_MAX_FILE_SIZE` (default: 300MB)
 
 ## Usage
 
@@ -136,20 +136,23 @@ This method is slower but more reliable in heavily restricted environments.
 
 The bot includes a feature to limit file downloads in group chats to prevent large files from being shared inappropriately:
 
-- **Default Limit**: 500MB for group and supergroup chats
-- **Private Chats**: No size restrictions (uses the standard `MAX_FILE_SIZE` limit)
+- **Default Limit**: 300MB for group and supergroup chats
+- **Private Chats**: Uses the standard `MAX_FILE_SIZE` cap (default 300MB)
 - **Size Check**: The bot checks file size before downloading to avoid wasting resources
-- **User Feedback**: When a file exceeds the group limit, users are informed and directed to use the bot in private chat
+- **User Feedback**: In groups, oversized downloads are skipped; in private chats an error is returned
 
 ### Configuration
 
-Set the group file size limit using the `GROUP_MAX_FILE_SIZE` environment variable:
+Set the overall file size cap using `MAX_FILE_SIZE`, and optionally override the group limit using `GROUP_MAX_FILE_SIZE`:
 
 ```
-GROUP_MAX_FILE_SIZE=524288000  # 500MB in bytes (default)
+MAX_FILE_SIZE=314572800        # 300MB in bytes (default)
+GROUP_MAX_FILE_SIZE=314572800  # 300MB in bytes (default)
 GROUP_MAX_FILE_SIZE=104857600  # 100MB in bytes
 GROUP_MAX_FILE_SIZE=1073741824 # 1GB in bytes
 ```
+
+The effective group limit is the smaller of `GROUP_MAX_FILE_SIZE` and `MAX_FILE_SIZE`.
 
 ### Behavior
 

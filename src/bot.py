@@ -42,7 +42,9 @@ class Bot:
         async def help_cmd(client, message):
             logger.info(f"Received /help command from user {message.from_user.id}")
             is_group = message.chat.type in ["group", "supergroup"]
-            group_limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
+            max_limit_mb = self.config.MAX_FILE_SIZE / (1024 * 1024)
+            effective_group_limit = min(self.config.GROUP_MAX_FILE_SIZE, self.config.MAX_FILE_SIZE)
+            effective_group_limit_mb = effective_group_limit / (1024 * 1024)
             
             help_text = (
                 "📥 **YouTube Downloader Bot** 📥\n\n"
@@ -60,9 +62,14 @@ class Bot:
             
             if is_group:
                 help_text += (
-                    f"**📊 Group Limits:**\n"
-                    f"• File size limit: {group_limit_mb:.0f}MB\n"
+                    f"**📊 Limits:**\n"
+                    f"• File size limit: {effective_group_limit_mb:.0f}MB\n"
                     f"• For larger files, use the bot in private chat\n\n"
+                )
+            else:
+                help_text += (
+                    f"**📊 Limits:**\n"
+                    f"• File size limit: {max_limit_mb:.0f}MB\n\n"
                 )
             
             help_text += "**Note:** All downloads are processed using yt-dlp for reliable and consistent quality."
@@ -84,9 +91,13 @@ class Bot:
             is_spotify = 'spotify.com' in url or 'spotify:' in url
             is_youtube = self.downloader.is_youtube_url(url)
             is_group = message.chat.type in ["group", "supergroup"]
+
+            effective_max_size = self.config.MAX_FILE_SIZE
+            if is_group:
+                effective_max_size = min(self.config.GROUP_MAX_FILE_SIZE, self.config.MAX_FILE_SIZE)
             
-            # Pre-download size check for groups (when yt-dlp estimates are available)
-            if is_group and not is_instagram and not is_spotify:
+            # Pre-download size check (when yt-dlp estimates are available)
+            if not is_instagram and not is_spotify:
                 try:
                     pre_check_message = await message.reply_text("🔍 Checking file size before download...")
                     file_info = await self.downloader.get_file_info(url)
@@ -94,17 +105,22 @@ class Bot:
                     # Only skip download if we have a size estimate and it's significantly over the limit
                     # Add 10% buffer to account for yt-dlp estimate inaccuracies
                     estimated_size = file_info.get('file_size', 0)
-                    size_threshold = self.config.GROUP_MAX_FILE_SIZE * 1.1  # 10% buffer
+                    size_threshold = effective_max_size * 1.1  # 10% buffer
                     
                     if estimated_size > 0 and estimated_size > size_threshold:
                         size_mb = estimated_size / (1024 * 1024)
-                        limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
+                        limit_mb = effective_max_size / (1024 * 1024)
                         
-                        # Just delete the message silently in groups
-                        await pre_check_message.delete()
+                        if is_group:
+                            # Just delete the message silently in groups
+                            await pre_check_message.delete()
+                        else:
+                            await pre_check_message.edit_text(
+                                f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)."
+                            )
                         
                         # Log the rejection for debugging
-                        logger.info(f"Pre-download check: File too large for group. "
+                        logger.info(f"Pre-download check: File too large. "
                                    f"Estimated: {size_mb:.1f}MB > {limit_mb:.0f}MB limit")
                         return
                     else:
@@ -156,33 +172,31 @@ class Bot:
 
                 file_size = os.path.getsize(file_path)
                 
-                # Check file size limit for groups AFTER download (using actual file size)
-                if is_group and file_size > self.config.GROUP_MAX_FILE_SIZE:
+                # Check file size limit AFTER download (using actual file size)
+                if file_size > effective_max_size:
                     size_mb = file_size / (1024 * 1024)
-                    limit_mb = self.config.GROUP_MAX_FILE_SIZE / (1024 * 1024)
-                    
-                    # Get file title for logging
-                    file_name = os.path.basename(file_path)
-                    title = os.path.splitext(file_name)[0] if file_name else "Downloaded file"
-                    
-                    # Just delete the message silently in groups
-                    await status_message.delete()
-                    
-                    # Log the rejection for debugging
-                    logger.info(f"Post-download check: File too large for group. "
-                               f"Actual: {size_mb:.1f}MB > {limit_mb:.0f}MB limit. File: {title}")
-                    
-                    # Clean up the downloaded file since we can't upload it
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        logger.error(f"Error deleting oversized file: {e}")
-                    return
-                
-                # Check overall file size limit (for both groups and private chats)
-                if file_size > self.config.MAX_FILE_SIZE:
-                    raise ValueError(f"File too large ({file_size/1024/1024:.1f}MB > "
-                                    f"{self.config.MAX_FILE_SIZE/1024/1024}MB")
+                    limit_mb = effective_max_size / (1024 * 1024)
+
+                    if is_group:
+                        # Get file title for logging
+                        file_name = os.path.basename(file_path)
+                        title = os.path.splitext(file_name)[0] if file_name else "Downloaded file"
+
+                        # Just delete the message silently in groups
+                        await status_message.delete()
+
+                        # Log the rejection for debugging
+                        logger.info(f"Post-download check: File too large for group. "
+                                   f"Actual: {size_mb:.1f}MB > {limit_mb:.0f}MB limit. File: {title}")
+
+                        # Clean up the downloaded file since we can't upload it
+                        try:
+                            os.remove(file_path)
+                        except Exception as e:
+                            logger.error(f"Error deleting oversized file: {e}")
+                        return
+
+                    raise ValueError(f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)")
 
                 await status_message.edit_text("Upload in progress...")
                 
