@@ -66,10 +66,10 @@ class TestUploadFile:
         file_path = tmp_path / "test.mp4"
         file_path.write_bytes(b"fake mp4 data")
 
-        await bot.upload_file(message, str(file_path))
+        await bot.upload_file(message, str(file_path), status_msg)
 
         message.reply_video.assert_called_once()
-        status_msg.edit_text.assert_not_called()
+        assert message.reply_video.call_args.kwargs["progress"] == bot._upload_progress
 
     @pytest.mark.asyncio
     async def test_sends_document_for_non_video(self, tmp_path):
@@ -82,26 +82,26 @@ class TestUploadFile:
         file_path = tmp_path / "test.mp3"
         file_path.write_bytes(b"fake mp3 data")
 
-        await bot.upload_file(message, str(file_path))
+        await bot.upload_file(message, str(file_path), status_msg)
 
         message.reply_document.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_does_not_edit_deleted_status_after_upload(self, tmp_path):
+    async def test_upload_receives_existing_status_for_progress(self, tmp_path):
         bot = _make_bot()
         message = _make_message("private")
         message.reply_video = AsyncMock()
 
         status_msg = AsyncMock()
-        status_msg.edit_text = AsyncMock(side_effect=Exception("deleted"))
 
         file_path = tmp_path / "test.mp4"
         file_path.write_bytes(b"fake mp4 data")
 
-        await bot.upload_file(message, str(file_path))
+        await bot.upload_file(message, str(file_path), status_msg)
 
         message.reply_video.assert_called_once()
-        status_msg.edit_text.assert_not_called()
+        progress_args = message.reply_video.call_args.kwargs["progress_args"]
+        assert progress_args[0] is status_msg
 
 
 class TestProcessRequestSuccess:
@@ -115,14 +115,8 @@ class TestProcessRequestSuccess:
         bot.downloader.download = AsyncMock(return_value=str(file_path))
 
         message = _make_message("private")
-        pre_check_msg = AsyncMock()
         status_msg = AsyncMock()
-        reply_text_calls = [pre_check_msg, status_msg]
-
-        async def reply_text(text, **kwargs):
-            return reply_text_calls.pop(0) if reply_text_calls else AsyncMock()
-
-        message.reply_text = AsyncMock(side_effect=reply_text)
+        message.reply_text = AsyncMock(return_value=status_msg)
         message.reply_video = AsyncMock()
 
         await bot._process_request(
@@ -134,8 +128,8 @@ class TestProcessRequestSuccess:
             is_group=False,
         )
 
-        pre_check_msg.delete.assert_called_once()
         status_msg.delete.assert_called_once()
+        message.reply_text.assert_called_once()
         message.reply_video.assert_called_once()
 
     @pytest.mark.asyncio
@@ -175,13 +169,8 @@ class TestProcessRequestError:
 
         message = _make_message("private")
 
-        pre_check_msg = AsyncMock()
         status_msg = AsyncMock()
-        replies = [pre_check_msg, status_msg]
-        async def reply_text(text, **kwargs):
-            return replies.pop(0)
-
-        message.reply_text = AsyncMock(side_effect=reply_text)
+        message.reply_text = AsyncMock(return_value=status_msg)
 
         await bot._process_request(
             message=message,
@@ -192,8 +181,9 @@ class TestProcessRequestError:
             is_group=False,
         )
 
-        status_msg.delete.assert_called_once()
-        assert message.reply_text.call_count >= 2
+        status_msg.delete.assert_not_called()
+        assert "Error: download failed" in status_msg.edit_text.call_args.args[0]
+        message.reply_text.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_download_error_group_silent(self):
@@ -202,13 +192,8 @@ class TestProcessRequestError:
 
         message = _make_message("supergroup")
 
-        pre_check_msg = AsyncMock()
         status_msg = AsyncMock()
-        replies = [pre_check_msg, status_msg]
-        async def reply_text(text, **kwargs):
-            return replies.pop(0)
-
-        message.reply_text = AsyncMock(side_effect=reply_text)
+        message.reply_text = AsyncMock(return_value=status_msg)
 
         await bot._process_request(
             message=message,
@@ -232,10 +217,8 @@ class TestProcessRequestError:
         bot.downloader.download = AsyncMock(return_value=str(file_path))
 
         message = _make_message("private")
-        pre_check_msg = AsyncMock()
         status_msg = AsyncMock()
-
-        message.reply_text = AsyncMock(side_effect=[pre_check_msg, status_msg, AsyncMock()])
+        message.reply_text = AsyncMock(return_value=status_msg)
 
         await bot._process_request(
             message=message,
@@ -246,7 +229,8 @@ class TestProcessRequestError:
             is_group=False,
         )
 
-        status_msg.delete.assert_called_once()
+        status_msg.delete.assert_not_called()
+        assert "File too large" in status_msg.edit_text.call_args.args[0]
 
     @pytest.mark.asyncio
     async def test_too_large_post_download_group_silent(self, tmp_path):
@@ -260,13 +244,7 @@ class TestProcessRequestError:
         message = _make_message("supergroup")
 
         status_msg = AsyncMock()
-        pre_check_msg = AsyncMock()
-        reply_text_calls = [pre_check_msg, status_msg]
-
-        async def reply_text(text, **kwargs):
-            return reply_text_calls.pop(0) if reply_text_calls else AsyncMock()
-
-        message.reply_text = AsyncMock(side_effect=reply_text)
+        message.reply_text = AsyncMock(return_value=status_msg)
 
         await bot._process_request(
             message=message,
@@ -277,7 +255,6 @@ class TestProcessRequestError:
             is_group=False,
         )
 
-        pre_check_msg.delete.assert_called_once()
         status_msg.delete.assert_called_once()
 
 
@@ -306,6 +283,32 @@ class TestProgressReporting:
     """Progress reporting should edit the status message during processing."""
 
     @pytest.mark.asyncio
+    async def test_existing_queue_message_is_reused(self, tmp_path):
+        bot = _make_bot()
+        file_path = tmp_path / "video.mp4"
+        file_path.write_bytes(b"video data")
+        bot.downloader.download = AsyncMock(return_value=str(file_path))
+
+        message = _make_message("private")
+        message.reply_text = AsyncMock()
+        message.reply_video = AsyncMock()
+        queued_status = AsyncMock()
+
+        await bot._process_request(
+            message=message,
+            url="https://youtube.com/watch?v=test",
+            is_instagram=False,
+            is_spotify=False,
+            is_youtube=True,
+            is_group=False,
+            status_message=queued_status,
+        )
+
+        message.reply_text.assert_not_called()
+        queued_status.edit_text.assert_called()
+        queued_status.delete.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_status_edited_during_lifecycle(self, tmp_path):
         bot = _make_bot()
         file_path = tmp_path / "video.mp4"
@@ -313,14 +316,8 @@ class TestProgressReporting:
         bot.downloader.download = AsyncMock(return_value=str(file_path))
 
         message = _make_message("private")
-        pre_check_msg = AsyncMock()
         status_msg = AsyncMock()
-        reply_text_calls = [pre_check_msg, status_msg]
-
-        async def reply_text(text, **kwargs):
-            return reply_text_calls.pop(0) if reply_text_calls else AsyncMock()
-
-        message.reply_text = AsyncMock(side_effect=reply_text)
+        message.reply_text = AsyncMock(return_value=status_msg)
         message.reply_video = AsyncMock()
 
         await bot._process_request(

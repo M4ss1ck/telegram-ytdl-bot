@@ -159,17 +159,8 @@ class Bot:
                     if self.queue_waiting > 0:
                         self.queue_waiting -= 1
 
-                try:
-                    await queued_message.edit_text("Now processing your request...")
-                except Exception as e:
-                    logger.debug(f"Failed to update queue message: {e}")
-
-                try:
-                    await queued_message.delete()
-                    queued_message = None
-                except Exception as e:
-                    logger.debug(f"Failed to delete queue message: {e}")
-
+            status_message = queued_message
+            queued_message = None
             await self._process_request(
                 message=message,
                 url=url,
@@ -177,6 +168,7 @@ class Bot:
                 is_spotify=is_spotify,
                 is_youtube=is_youtube,
                 is_group=is_group,
+                status_message=status_message,
             )
         finally:
             if acquired:
@@ -187,15 +179,23 @@ class Bot:
                 except Exception as e:
                     logger.debug(f"Failed to delete queue message: {e}")
 
-    async def _process_request(self, message, url, is_instagram, is_spotify, is_youtube, is_group):
+    async def _process_request(
+        self, message, url, is_instagram, is_spotify, is_youtube, is_group,
+        status_message=None,
+    ):
         effective_max_size = self.config.MAX_FILE_SIZE
         if is_group:
             effective_max_size = min(self.config.GROUP_MAX_FILE_SIZE, self.config.MAX_FILE_SIZE)
+        status_deleted = False
+        keep_status = False
 
         # Pre-download size check (when yt-dlp estimates are available)
         if not is_instagram and not is_spotify:
             try:
-                pre_check_message = await message.reply_text("🔍 Checking file size before download...")
+                if status_message:
+                    await status_message.edit_text("🔍 Checking file size before download...")
+                else:
+                    status_message = await message.reply_text("🔍 Checking file size before download...")
                 file_info = await self.downloader.get_file_info(url)
 
                 # Only skip download if we have a size estimate and it's significantly over the limit
@@ -209,9 +209,9 @@ class Bot:
 
                     if is_group:
                         # Just delete the message silently in groups
-                        await pre_check_message.delete()
+                        await status_message.delete()
                     else:
-                        await pre_check_message.edit_text(
+                        await status_message.edit_text(
                             f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)."
                         )
 
@@ -220,8 +220,6 @@ class Bot:
                                f"Estimated: {size_mb:.1f}MB > {limit_mb:.0f}MB limit")
                     return
                 else:
-                    # Size is acceptable or unknown - proceed with download
-                    await pre_check_message.delete()
                     if estimated_size > 0:
                         logger.info(f"Pre-download check passed. Estimated size: {estimated_size/1024/1024:.1f}MB")
                     else:
@@ -229,30 +227,24 @@ class Bot:
 
             except Exception as e:
                 logger.warning(f"Pre-download size check failed: {e}")
-                # If pre-check fails, continue with download and rely on post-download check
-                try:
-                    await pre_check_message.delete()
-                except:
-                    pass
+                # Continue with the same status and rely on the post-download check.
 
         # Provide specific status message based on URL type
         if is_instagram:
-            status_message = await message.reply_text(
-                "Processing Instagram content with Instaloader... This may take a moment."
-            )
+            status_text = "Processing Instagram content with Instaloader... This may take a moment."
         elif is_spotify:
-            status_message = await message.reply_text(
-                "Processing Spotify content... Converting to MP3."
-            )
+            status_text = "Processing Spotify content... Converting to MP3."
         elif is_youtube:
-            status_message = await message.reply_text(
-                "Processing YouTube content... Downloading with yt-dlp."
-            )
+            status_text = "Processing YouTube content... Downloading with yt-dlp."
         else:
-            status_message = await message.reply_text("Downloading...")
+            status_text = "Downloading..."
+
+        if status_message:
+            await status_message.edit_text(status_text)
+        else:
+            status_message = await message.reply_text(status_text)
 
         file_path = None
-        status_deleted = False
 
         try:
             # Download with timeout
@@ -298,11 +290,7 @@ class Bot:
 
             await status_message.edit_text("Upload in progress...")
 
-            # Remove the transient status before creating the permanent media reply.
-            await status_message.delete()
-            status_deleted = True
-
-            await self.upload_file(message, file_path)
+            await self.upload_file(message, file_path, status_message)
 
             # Only delete if upload succeeded
             try:
@@ -319,7 +307,7 @@ class Bot:
             elif is_youtube:
                 error_msg += " YouTube download took too long. Try again later."
             logger.error(error_msg)
-            await self.send_error(message, error_msg)
+            keep_status = await self.send_error(message, error_msg, status_message)
         except Exception as e:
             error_msg = str(e)
 
@@ -338,7 +326,9 @@ class Bot:
                 error_msg = "YouTube content couldn't be accessed. The video might be restricted or unavailable."
 
             logger.error(f"Error processing URL {url}: {error_msg}", exc_info=True)
-            await self.send_error(message, f"Error: {error_msg}")
+            keep_status = await self.send_error(
+                message, f"Error: {error_msg}", status_message
+            )
         finally:
             # Cleanup files only if they exist
             if file_path and os.path.exists(file_path):
@@ -347,23 +337,30 @@ class Bot:
                 except Exception as e:
                     logger.error(f"Error deleting file: {e}")
             # Safely delete status message if it still exists
-            if not status_deleted:
+            if not status_deleted and not keep_status:
                 try:
                     await status_message.delete()
                 except Exception as e:
                     # Message may have already been deleted, which is fine
                     logger.debug(f"Status message already deleted or couldn't be deleted: {e}")
 
-    async def upload_file(self, message, file_path):
-        """Upload one file as the sole response to the URL."""
+    async def upload_file(self, message, file_path, status_message):
+        """Upload one file while updating the existing status message."""
         try:
+            progress_args = (status_message, [asyncio.get_event_loop().time(), False])
             if file_path.endswith(('.mp4', '.mkv', '.webm')):
                 await message.reply_video(
                     video=file_path,
+                    progress=self._upload_progress,
+                    progress_args=progress_args,
                     supports_streaming=True
                 )
             else:
-                await message.reply_document(document=file_path)
+                await message.reply_document(
+                    document=file_path,
+                    progress=self._upload_progress,
+                    progress_args=progress_args,
+                )
 
         except FloodWait as e:
             logger.warning(f"FloodWait during upload, waiting {e.value} seconds before retry...")
@@ -381,19 +378,44 @@ class Bot:
             logger.error(f"Upload failed: {e}")
             raise
 
-    async def send_error(self, message, error_text):
-        """Send error messages only in private chats"""
+    async def _upload_progress(self, current, total, status_message, tracking_data):
+        """Update upload progress at most once every five seconds."""
+        try:
+            if tracking_data[1]:
+                return
+            now = asyncio.get_event_loop().time()
+            if now - tracking_data[0] < 5:
+                return
+            tracking_data[0] = now
+            percent = (current / total) * 100
+            await status_message.edit_text(
+                f"Uploading: {percent:.0f}%  "
+                f"({current//(1024*1024)}MB / {total//(1024*1024)}MB)"
+            )
+        except FloodWait:
+            tracking_data[1] = True
+            logger.warning("FloodWait during progress update, disabling further updates")
+        except Exception as e:
+            logger.warning(f"Progress update failed: {e}")
+
+    async def send_error(self, message, error_text, status_message=None):
+        """Show an error in the existing private-chat status message."""
         if message.chat.type == "private":
             try:
-                await message.reply_text(
-                    error_text,
-                    disable_web_page_preview=True,
-                    reply_to_message_id=message.id
-                )
+                if status_message:
+                    await status_message.edit_text(error_text)
+                else:
+                    await message.reply_text(
+                        error_text,
+                        disable_web_page_preview=True,
+                        reply_to_message_id=message.id,
+                    )
+                return True
             except Exception as e:
                 logger.error(f"Failed to send error message in private chat: {e}")
         else:
             logger.info(f"Error occurred in {message.chat.type} chat")
+        return False
 
     def run(self):
         logger.info("Bot is starting...")
