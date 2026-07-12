@@ -5,6 +5,7 @@ services:
       target: development  # Matches Dockerfile stage name
     volumes:
       - ./.env:/app/.env:ro
+      - ./secrets/instagram-cookies.txt:/run/secrets/instagram-cookies.txt:ro
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
