@@ -6,7 +6,7 @@ This project is a Telegram bot that allows users to download content from variou
 
 - Download videos from YouTube and other platforms using `yt-dlp`
 - Enhanced YouTube support with multiple bypass methods for blocked regions
-- Specialized support for Instagram content using `Instaloader`
+- Specialized support for Instagram images using `gallery-dl`
 - Spotify music download support with high-quality MP3 conversion
 - Easy to use Telegram bot interface
 - Configurable settings for the bot
@@ -18,7 +18,7 @@ This project is a Telegram bot that allows users to download content from variou
 - `uv` package manager (https://docs.astral.sh/uv/)
 - `pyrogram` and `tgcrypto` for Telegram API
 - `yt-dlp` for general video downloads
-- `instaloader` for Instagram content
+- `gallery-dl` for Instagram images and galleries
 - `spotipy` for Spotify content
 - `ffmpeg` for audio/video processing
 - `aiohttp` for API-based YouTube downloads
@@ -93,14 +93,13 @@ currently looks for Floorp's Flatpak profile under
    COOKIE_FILE_PATH=/run/secrets/instagram-cookies.txt
    ```
 
-5. Recreate the bot container so the in-memory Instagram session reloads the
-   exported cookies:
+5. Recreate the bot container so it receives the cookie-file configuration:
 
    ```bash
    docker compose up -d --force-recreate
    ```
 
-6. Confirm the cookies were loaded without printing their values:
+6. Confirm the bot restarted successfully:
 
    ```bash
    docker compose logs --tail 50 bot
@@ -109,7 +108,7 @@ currently looks for Floorp's Flatpak profile under
    The startup output should contain:
 
    ```text
-   Loaded Instagram cookies for Instaloader
+   Bot is starting...
    ```
 
 Run the export again whenever the Instagram browser session is refreshed or
@@ -143,7 +142,7 @@ committed or shared.
   - Browser-based downloads for heavily blocked regions
   - Optional cookie support for yt-dlp methods to bypass login/bot checks
   - Multiple fallback mechanisms to handle blocked or restricted content
-- Instagram posts, reels, and stories (via Instaloader with yt-dlp fallback)
+- Instagram videos via yt-dlp, with gallery-dl for photo posts
 - Spotify tracks, albums, and playlists (via specialized Spotify downloader)
 
 ## YouTube Download Methods

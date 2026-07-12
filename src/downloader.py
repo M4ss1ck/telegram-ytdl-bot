@@ -4,7 +4,7 @@ import asyncio
 import re
 import logging
 import shutil
-from .instagram_downloader import InstagramDownloader
+from .gallery_downloader import GalleryDownloader
 from .spotify_downloader import SpotifyDownloader
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class Downloader:
     def __init__(self, config):
         self.config = config
-        self.instagram_downloader = InstagramDownloader(config)
+        self.gallery_downloader = GalleryDownloader(config)
         self.spotify_downloader = SpotifyDownloader(config)
     
     async def get_file_info(self, url):
@@ -114,9 +114,9 @@ class Downloader:
                     raise
                 logger.info(
                     "Instagram post has no video formats; downloading post media "
-                    "with Instaloader"
+                    "with gallery-dl"
                 )
-                return await self.instagram_downloader.download(url)
+                return await self.gallery_downloader.download(url)
         elif is_spotify:
             try:
                 # Try using Spotify downloader

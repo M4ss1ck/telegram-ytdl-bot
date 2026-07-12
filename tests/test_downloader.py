@@ -23,7 +23,7 @@ def test_cookie_file_is_copied_to_writable_runtime_path(mock_config, tmp_path):
 @pytest.mark.asyncio
 async def test_instagram_uses_ytdlp_without_trying_instaloader(mock_config):
     downloader = Downloader(mock_config)
-    downloader.instagram_downloader.download = AsyncMock()
+    downloader.gallery_downloader.download = AsyncMock()
 
     with patch.object(
         downloader,
@@ -33,7 +33,7 @@ async def test_instagram_uses_ytdlp_without_trying_instaloader(mock_config):
         result = await downloader.download("https://www.instagram.com/reel/example/")
 
     assert result == "video.mp4"
-    downloader.instagram_downloader.download.assert_not_awaited()
+    downloader.gallery_downloader.download.assert_not_awaited()
     ytdlp_download.assert_awaited_once_with(
         "https://www.instagram.com/reel/example/",
         is_instagram=True,
@@ -41,9 +41,9 @@ async def test_instagram_uses_ytdlp_without_trying_instaloader(mock_config):
 
 
 @pytest.mark.asyncio
-async def test_instagram_photo_falls_back_to_instaloader(mock_config):
+async def test_instagram_photo_falls_back_to_gallery_dl(mock_config):
     downloader = Downloader(mock_config)
-    downloader.instagram_downloader.download = AsyncMock(
+    downloader.gallery_downloader.download = AsyncMock(
         return_value="instagram_example.jpg"
     )
 
@@ -57,7 +57,7 @@ async def test_instagram_photo_falls_back_to_instaloader(mock_config):
         )
 
     assert result == "instagram_example.jpg"
-    downloader.instagram_downloader.download.assert_awaited_once()
+    downloader.gallery_downloader.download.assert_awaited_once()
 
 
 @pytest.mark.asyncio
