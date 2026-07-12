@@ -47,16 +47,25 @@ class GalleryDownloader:
             error = stderr.decode(errors="replace").strip()
             raise ValueError(f"gallery-dl failed: {error or 'unknown error'}")
 
-        media_files = [path for path in download_dir.rglob("*") if path.is_file()]
+        media_files = sorted(
+            [path for path in download_dir.rglob("*") if path.is_file()],
+            key=lambda path: path.name,
+        )
         if not media_files:
             raise ValueError("gallery-dl did not download any Instagram media")
 
-        media_file = max(media_files, key=lambda path: path.stat().st_size)
-        target_file = (
-            self.config.downloads_dir
-            / f"instagram_{media_file.stem}{media_file.suffix.lower()}"
-        )
-        shutil.move(media_file, target_file)
+        result_files = []
+        for media_file in media_files:
+            target_file = (
+                self.config.downloads_dir
+                / f"instagram_{media_file.stem}{media_file.suffix.lower()}"
+            )
+            shutil.move(str(media_file), str(target_file))
+            result_files.append(str(target_file))
+
         shutil.rmtree(download_dir, ignore_errors=True)
-        logger.info(f"Downloaded Instagram media with gallery-dl: {target_file.name}")
-        return str(target_file)
+        logger.info(
+            f"Downloaded Instagram gallery media with gallery-dl: "
+            f"{len(result_files)} file(s)"
+        )
+        return result_files
