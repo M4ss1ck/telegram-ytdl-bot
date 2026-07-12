@@ -64,6 +64,59 @@ For browser-based YouTube downloads:
    - To use cookies with yt-dlp methods, set `COOKIE_FILE_PATH` to the path of your cookies.txt file
    - To configure group file size limits, set `GROUP_MAX_FILE_SIZE` (default: 300MB)
 
+### Instagram Cookies from Floorp
+
+Instagram downloads use cookies from a logged-in Floorp profile. The bootstrap
+script is intended to run on the Docker host, not inside the bot container. It
+currently looks for Floorp's Flatpak profile under
+`~/.var/app/one.ablaze.floorp/.floorp`.
+
+1. Open Floorp and log into `https://www.instagram.com`.
+2. Confirm that the post you want to download opens in that browser session.
+3. From the project directory, install the project dependencies if needed:
+
+   ```bash
+   uv sync
+   ```
+
+4. Export the current Instagram session:
+
+   ```bash
+   uv run python scripts/bootstrap_instagram_cookies.py
+   ```
+
+   The script finds the most recently modified Floorp profile, exports its
+   Instagram cookies to `secrets/instagram-cookies.txt`, requires a `sessionid`
+   cookie, sets the file mode to `0600`, and updates `.env` with:
+
+   ```text
+   COOKIE_FILE_PATH=/run/secrets/instagram-cookies.txt
+   ```
+
+5. Recreate the bot container so the in-memory Instagram session reloads the
+   exported cookies:
+
+   ```bash
+   docker compose up -d --force-recreate
+   ```
+
+6. Confirm the cookies were loaded without printing their values:
+
+   ```bash
+   docker compose logs --tail 50 bot
+   ```
+
+   The startup output should contain:
+
+   ```text
+   Loaded Instagram cookies for Instaloader
+   ```
+
+Run the export again whenever the Instagram browser session is refreshed or
+invalidated. Treat `secrets/instagram-cookies.txt` as a password: its
+`sessionid` grants access to the logged-in Instagram session and must not be
+committed or shared.
+
 ## Usage
 
 1. Run the bot:
