@@ -3,6 +3,7 @@ import os
 import asyncio
 import re
 import logging
+import shutil
 from .instagram_downloader import InstagramDownloader
 from .spotify_downloader import SpotifyDownloader
 
@@ -36,9 +37,9 @@ class Downloader:
                 'Connection': 'keep-alive',
             }
             
-            # Add cookie file if configured and exists
-            if self.config.COOKIE_FILE_PATH and os.path.exists(self.config.COOKIE_FILE_PATH):
-                ydl_opts['cookiefile'] = self.config.COOKIE_FILE_PATH
+            cookie_file = self._prepare_cookie_file()
+            if cookie_file:
+                ydl_opts['cookiefile'] = cookie_file
             
             return await asyncio.to_thread(self._extract_info, url, ydl_opts)
         except Exception as e:
@@ -105,14 +106,8 @@ class Downloader:
         is_youtube = self.is_youtube_url(url)
         
         if is_instagram:
-            try:
-                # Try using Instaloader first
-                logger.info(f"Attempting to download Instagram URL with Instaloader: {url}")
-                return await self.instagram_downloader.download(url)
-            except Exception as e:
-                logger.warning(f"Instaloader failed for Instagram URL: {e}. Falling back to yt-dlp.")
-                # Fall back to yt-dlp if Instaloader fails
-                return await self._download_with_ytdlp(url, is_instagram=True)
+            logger.info(f"Downloading Instagram URL with authenticated yt-dlp: {url}")
+            return await self._download_with_ytdlp(url, is_instagram=True)
         elif is_spotify:
             try:
                 # Try using Spotify downloader
@@ -188,18 +183,31 @@ class Downloader:
                 }
             })
         
-        # Add cookie file if configured and exists
-        if self.config.COOKIE_FILE_PATH and os.path.exists(self.config.COOKIE_FILE_PATH):
-            logger.info(f"Using cookie file: {self.config.COOKIE_FILE_PATH}")
-            ydl_opts['cookiefile'] = self.config.COOKIE_FILE_PATH
-        elif self.config.COOKIE_FILE_PATH:
-            logger.warning(f"Cookie file specified but not found: {self.config.COOKIE_FILE_PATH}")
+        cookie_file = self._prepare_cookie_file()
+        if cookie_file:
+            logger.info(f"Using runtime cookie file: {cookie_file}")
+            ydl_opts['cookiefile'] = cookie_file
         
         try:
             return await asyncio.to_thread(self._download_video, url, ydl_opts)
         except Exception as e:
             logger.error(f"Download failed for {url}: {str(e)}")
             raise Exception(f"Download failed: {str(e)}")
+
+    def _prepare_cookie_file(self):
+        """Copy mounted cookies to a private path that yt-dlp may update."""
+        source = self.config.COOKIE_FILE_PATH
+        if not source:
+            return None
+        if not os.path.exists(source):
+            logger.warning(f"Cookie file specified but not found: {source}")
+            return None
+
+        runtime_file = self.config.downloads_dir / ".runtime-cookies.txt"
+        os.makedirs(self.config.downloads_dir, exist_ok=True)
+        shutil.copyfile(source, runtime_file)
+        os.chmod(runtime_file, 0o600)
+        return str(runtime_file)
             
     def _download_video(self, url, ydl_opts):
         try:
