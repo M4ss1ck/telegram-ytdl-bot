@@ -5,6 +5,24 @@ import pytest
 from src.instagram_downloader import InstagramDownloader
 
 
+def test_configured_cookies_are_loaded_into_instaloader(mock_config, tmp_path):
+    cookie_file = tmp_path / "instagram-cookies.txt"
+    cookie_file.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".instagram.com\tTRUE\t/\tTRUE\t2147483647\tsessionid\ttest-session\n"
+    )
+    mock_config.COOKIE_FILE_PATH = str(cookie_file)
+
+    downloader = InstagramDownloader(mock_config)
+
+    assert (
+        downloader.loader.context._session.cookies.get(
+            "sessionid", domain=".instagram.com", path="/"
+        )
+        == "test-session"
+    )
+
+
 @pytest.mark.asyncio
 async def test_download_returns_instagram_post_image(mock_config):
     downloader = InstagramDownloader(mock_config)

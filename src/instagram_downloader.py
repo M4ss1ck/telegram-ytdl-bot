@@ -4,6 +4,7 @@ import instaloader
 import re
 import asyncio
 import time
+from http.cookiejar import MozillaCookieJar
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class InstagramDownloader:
         
         # Try to load session if available
         self._load_session()
+        self._load_cookies()
         
     def _load_session(self):
         """Try to load an existing Instagram session if available"""
@@ -61,6 +63,20 @@ class InstagramDownloader:
                 logger.info("Loaded Instagram session from file")
             except Exception as e:
                 logger.warning(f"Failed to load Instagram session: {e}")
+
+    def _load_cookies(self):
+        """Load the configured Netscape cookie file into Instaloader."""
+        cookie_file = self.config.COOKIE_FILE_PATH
+        if not cookie_file or not os.path.exists(cookie_file):
+            return
+
+        try:
+            cookies = MozillaCookieJar(cookie_file)
+            cookies.load(ignore_discard=True, ignore_expires=True)
+            self.loader.context._session.cookies.update(cookies)
+            logger.info("Loaded Instagram cookies for Instaloader")
+        except Exception as e:
+            logger.warning(f"Failed to load Instagram cookies: {e}")
     
     def _extract_shortcode(self, url):
         """Extract the shortcode from an Instagram URL"""
