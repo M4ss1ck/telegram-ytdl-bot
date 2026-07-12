@@ -137,10 +137,6 @@ class Downloader:
             'retries': 10,
             'fragment_retries': 10,
             'skip_unavailable_fragments': True,
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4',
-            }],
         }
         
         # Add general headers
@@ -160,10 +156,6 @@ class Downloader:
                     }
                 },
                 'format': 'best',  # Instagram often has limited format options
-                'postprocessors': [{
-                    'key': 'FFmpegVideoConvertor',
-                    'preferedformat': 'mp4',
-                }],
             })
         
         # Add Spotify-specific options if this is a Spotify URL
@@ -220,6 +212,21 @@ class Downloader:
 
                 # Get the expected filename
                 filename = ydl.prepare_filename(info)
+
+                requested_downloads = info.get('requested_downloads') or []
+                if requested_downloads and requested_downloads[0].get('filepath'):
+                    filename = requested_downloads[0]['filepath']
+                elif info.get('entries'):
+                    first_entry = next(
+                        (entry for entry in info['entries'] if entry),
+                        None,
+                    )
+                    if first_entry:
+                        requested_downloads = first_entry.get('requested_downloads') or []
+                        if requested_downloads and requested_downloads[0].get('filepath'):
+                            filename = requested_downloads[0]['filepath']
+                        else:
+                            filename = ydl.prepare_filename(first_entry)
 
                 # Handle audio files (for Spotify)
                 if 'FFmpegExtractAudio' in [p['key'] for p in ydl_opts.get('postprocessors', [])]:

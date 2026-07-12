@@ -348,7 +348,14 @@ class Bot:
         """Upload one file while updating the existing status message."""
         try:
             progress_args = (status_message, [asyncio.get_event_loop().time(), False])
-            if file_path.endswith(('.mp4', '.mkv', '.webm')):
+            extension = os.path.splitext(file_path)[1].lower()
+            if extension in ('.jpg', '.jpeg', '.png', '.webp'):
+                await message.reply_photo(
+                    photo=file_path,
+                    progress=self._upload_progress,
+                    progress_args=progress_args,
+                )
+            elif extension in ('.mp4', '.mkv', '.webm'):
                 await message.reply_video(
                     video=file_path,
                     progress=self._upload_progress,
@@ -367,7 +374,10 @@ class Bot:
             await asyncio.sleep(e.value)
             # Retry without progress updates to avoid further flood
             try:
-                if file_path.endswith(('.mp4', '.mkv', '.webm')):
+                extension = os.path.splitext(file_path)[1].lower()
+                if extension in ('.jpg', '.jpeg', '.png', '.webp'):
+                    await message.reply_photo(photo=file_path)
+                elif extension in ('.mp4', '.mkv', '.webm'):
                     await message.reply_video(video=file_path, supports_streaming=True)
                 else:
                     await message.reply_document(document=file_path)

@@ -88,6 +88,21 @@ class TestUploadFile:
         message.reply_document.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_sends_image_as_photo(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_photo = AsyncMock()
+        status_msg = AsyncMock()
+        file_path = tmp_path / "picture.JPG"
+        file_path.write_bytes(b"fake image data")
+
+        await bot.upload_file(message, str(file_path), status_msg)
+
+        message.reply_photo.assert_called_once()
+        assert message.reply_photo.call_args.kwargs["photo"] == str(file_path)
+        assert message.reply_photo.call_args.kwargs["progress"] == bot._upload_progress
+
+    @pytest.mark.asyncio
     async def test_upload_receives_existing_status_for_progress(self, tmp_path):
         bot = _make_bot()
         message = _make_message("private")

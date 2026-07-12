@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -38,3 +38,42 @@ async def test_instagram_uses_ytdlp_without_trying_instaloader(mock_config):
         "https://www.instagram.com/reel/example/",
         is_instagram=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_instagram_download_does_not_force_video_conversion(mock_config):
+    downloader = Downloader(mock_config)
+
+    with patch.object(
+        downloader,
+        "_download_video",
+        return_value="picture.jpg",
+    ) as download_video:
+        result = await downloader._download_with_ytdlp(
+            "https://www.instagram.com/p/example/",
+            is_instagram=True,
+        )
+
+    assert result == "picture.jpg"
+    options = download_video.call_args.args[1]
+    assert options["format"] == "best"
+    assert "postprocessors" not in options
+
+
+def test_download_uses_image_filepath_reported_by_ytdlp(mock_config, tmp_path):
+    downloader = Downloader(mock_config)
+    image_path = tmp_path / "instagram-picture.jpg"
+    image_path.write_bytes(b"image data")
+    info = {
+        "title": "instagram-picture",
+        "ext": "jpg",
+        "requested_downloads": [{"filepath": str(image_path)}],
+    }
+    ydl = MagicMock()
+    ydl.__enter__.return_value = ydl
+    ydl.extract_info.return_value = info
+
+    with patch("src.downloader.yt_dlp.YoutubeDL", return_value=ydl):
+        result = downloader._download_video("https://example.com/picture.jpg", {})
+
+    assert result == str(image_path)
