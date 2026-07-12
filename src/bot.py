@@ -164,6 +164,12 @@ class Bot:
                 except Exception as e:
                     logger.debug(f"Failed to update queue message: {e}")
 
+                try:
+                    await queued_message.delete()
+                    queued_message = None
+                except Exception as e:
+                    logger.debug(f"Failed to delete queue message: {e}")
+
             await self._process_request(
                 message=message,
                 url=url,
@@ -246,6 +252,7 @@ class Bot:
             status_message = await message.reply_text("Downloading...")
 
         file_path = None
+        status_deleted = False
 
         try:
             # Download with timeout
@@ -274,6 +281,7 @@ class Bot:
 
                     # Just delete the message silently in groups
                     await status_message.delete()
+                    status_deleted = True
 
                     # Log the rejection for debugging
                     logger.info(f"Post-download check: File too large for group. "
@@ -290,11 +298,17 @@ class Bot:
 
             await status_message.edit_text("Upload in progress...")
 
-            # Upload with progress tracking
-            await self.upload_file(message, file_path, status_message)
+            # Remove the transient status before creating the permanent media reply.
+            await status_message.delete()
+            status_deleted = True
+
+            await self.upload_file(message, file_path)
 
             # Only delete if upload succeeded
-            os.remove(file_path)
+            try:
+                os.remove(file_path)
+            except Exception as e:
+                logger.error(f"Error deleting uploaded file: {e}")
 
         except asyncio.TimeoutError:
             error_msg = "Download timed out."
@@ -333,35 +347,23 @@ class Bot:
                 except Exception as e:
                     logger.error(f"Error deleting file: {e}")
             # Safely delete status message if it still exists
-            try:
-                await status_message.delete()
-            except Exception as e:
-                # Message may have already been deleted, which is fine
-                logger.debug(f"Status message already deleted or couldn't be deleted: {e}")
+            if not status_deleted:
+                try:
+                    await status_message.delete()
+                except Exception as e:
+                    # Message may have already been deleted, which is fine
+                    logger.debug(f"Status message already deleted or couldn't be deleted: {e}")
 
-    async def upload_file(self, message, file_path, status_message):
-        """Handle file upload with progress tracking and status messages"""
+    async def upload_file(self, message, file_path):
+        """Upload one file as the sole response to the URL."""
         try:
-            await status_message.edit_text("Starting upload...")
-
-            # tracking_data: [last_update_time, stop_progress_flag]
-            progress_args = (status_message, [asyncio.get_event_loop().time(), False])
-
             if file_path.endswith(('.mp4', '.mkv', '.webm')):
                 await message.reply_video(
                     video=file_path,
-                    progress=self._upload_progress,
-                    progress_args=progress_args,
                     supports_streaming=True
                 )
             else:
-                await message.reply_document(
-                    document=file_path,
-                    progress=self._upload_progress,
-                    progress_args=progress_args
-                )
-
-            await status_message.edit_text("Upload completed!")
+                await message.reply_document(document=file_path)
 
         except FloodWait as e:
             logger.warning(f"FloodWait during upload, waiting {e.value} seconds before retry...")
@@ -372,37 +374,12 @@ class Bot:
                     await message.reply_video(video=file_path, supports_streaming=True)
                 else:
                     await message.reply_document(document=file_path)
-                await status_message.edit_text("Upload completed!")
             except Exception as retry_e:
                 logger.error(f"Upload retry failed: {retry_e}")
                 raise
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             raise
-
-    async def _upload_progress(self, current, total, status_message, tracking_data):
-        """Throttled progress updates - max once every 5 seconds"""
-        try:
-            if tracking_data[1]:  # stop flag set after flood
-                return
-
-            now = asyncio.get_event_loop().time()
-            elapsed = now - tracking_data[0]
-
-            if elapsed < 5:
-                return
-
-            tracking_data[0] = now
-
-            percent = (current / total) * 100
-            await status_message.edit_text(
-                f"Uploading: {percent:.0f}%  ({current//(1024*1024)}MB / {total//(1024*1024)}MB)"
-            )
-        except FloodWait:
-            tracking_data[1] = True  # Stop all future progress updates
-            logger.warning("FloodWait during progress update, disabling further updates")
-        except Exception as e:
-            logger.warning(f"Progress update failed: {e}")
 
     async def send_error(self, message, error_text):
         """Send error messages only in private chats"""
