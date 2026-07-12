@@ -33,6 +33,7 @@ wheels/
 
 # Project specific
 downloads/
+sessions/
 secrets/
 ytdl_bot.session
 ytdl_bot.session-journal

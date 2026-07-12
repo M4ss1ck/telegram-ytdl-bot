@@ -8,6 +8,7 @@ __pycache__
 *.session
 *.session-journal
 downloads
+sessions
 secrets
 tests
 docs
