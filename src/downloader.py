@@ -107,7 +107,16 @@ class Downloader:
         
         if is_instagram:
             logger.info(f"Downloading Instagram URL with authenticated yt-dlp: {url}")
-            return await self._download_with_ytdlp(url, is_instagram=True)
+            try:
+                return await self._download_with_ytdlp(url, is_instagram=True)
+            except Exception as e:
+                if "no video formats found" not in str(e).lower():
+                    raise
+                logger.info(
+                    "Instagram post has no video formats; downloading post media "
+                    "with Instaloader"
+                )
+                return await self.instagram_downloader.download(url)
         elif is_spotify:
             try:
                 # Try using Spotify downloader

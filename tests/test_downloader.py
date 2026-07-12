@@ -41,6 +41,26 @@ async def test_instagram_uses_ytdlp_without_trying_instaloader(mock_config):
 
 
 @pytest.mark.asyncio
+async def test_instagram_photo_falls_back_to_instaloader(mock_config):
+    downloader = Downloader(mock_config)
+    downloader.instagram_downloader.download = AsyncMock(
+        return_value="instagram_example.jpg"
+    )
+
+    with patch.object(
+        downloader,
+        "_download_with_ytdlp",
+        new=AsyncMock(side_effect=Exception("No video formats found!")),
+    ):
+        result = await downloader.download(
+            "https://www.instagram.com/p/example/"
+        )
+
+    assert result == "instagram_example.jpg"
+    downloader.instagram_downloader.download.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_instagram_download_does_not_force_video_conversion(mock_config):
     downloader = Downloader(mock_config)
 

@@ -108,21 +108,30 @@ class InstagramDownloader:
                 target=shortcode
             )
             
-            # Find the downloaded video file
+            # Prefer video for mixed posts, otherwise return the post image itself.
             video_files = list(temp_dir.glob("*.mp4"))
-            if not video_files:
-                raise ValueError("No video file found in downloaded content")
-            
-            # Get the largest video file (usually the highest quality)
-            video_file = max(video_files, key=lambda f: f.stat().st_size)
+            image_files = [
+                file
+                for extension in ("*.jpg", "*.jpeg", "*.png", "*.webp")
+                for file in temp_dir.glob(extension)
+            ]
+            media_files = video_files or image_files
+            if not media_files:
+                raise ValueError("No media file found in downloaded content")
+
+            # The largest file is normally the highest-quality post media.
+            media_file = max(media_files, key=lambda f: f.stat().st_size)
             
             # Move the file to the downloads directory with a better name
-            target_file = self.config.downloads_dir / f"instagram_{shortcode}.mp4"
-            os.rename(video_file, target_file)
+            target_file = (
+                self.config.downloads_dir
+                / f"instagram_{shortcode}{media_file.suffix.lower()}"
+            )
+            os.rename(media_file, target_file)
             
             # Clean up the temporary directory
             for file in temp_dir.glob("*"):
-                if file != video_file:  # Don't try to delete the file we just moved
+                if file != media_file:  # Don't try to delete the file we just moved
                     try:
                         if file.is_file():
                             os.remove(file)
