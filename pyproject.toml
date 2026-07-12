@@ -1,0 +1,33 @@
+[project]
+name = "telegram-ytdl-bot"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pyrogram>=2.0.0",
+    "tgcrypto>=1.2.0",
+    "python-dotenv>=0.19.0",
+    "yt-dlp>=2023.11.16",
+    "browser-cookie3>=0.19.1",
+    "ffmpeg-python>=0.2.0",
+    "instaloader>=4.10.0",
+    "spotipy>=2.23.0",
+]
+
+[project.scripts]
+telegram-ytdl-bot = "src.__main__:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]

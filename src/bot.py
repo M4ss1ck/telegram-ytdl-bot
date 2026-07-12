@@ -129,10 +129,10 @@ class Bot:
         acquired = False
 
         try:
-            try:
-                await asyncio.wait_for(self.download_semaphore.acquire(), timeout=0)
+            if not self.download_semaphore.locked():
+                await self.download_semaphore.acquire()
                 acquired = True
-            except asyncio.TimeoutError:
+            else:
                 async with self.queue_lock:
                     if self.queue_waiting >= self.max_queue_size:
                         await message.reply_text(
@@ -208,14 +208,14 @@ class Bot:
                     limit_mb = effective_max_size / (1024 * 1024)
 
                     if is_group:
-                        # Just delete the message silently in groups
                         await status_message.delete()
+                        status_deleted = True
                     else:
                         await status_message.edit_text(
                             f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)."
                         )
+                        keep_status = True
 
-                    # Log the rejection for debugging
                     logger.info(f"Pre-download check: File too large. "
                                f"Estimated: {size_mb:.1f}MB > {limit_mb:.0f}MB limit")
                     return

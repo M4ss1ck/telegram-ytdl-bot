@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 from pathlib import Path
@@ -330,4 +331,115 @@ class TestProgressReporting:
         )
 
         assert status_msg.edit_text.call_count >= 1
+        status_msg.delete.assert_called_once()
+
+
+class TestProcessWithSemaphoreRegression:
+    @pytest.mark.asyncio
+    async def test_idle_bot_no_queue_message(self):
+        bot = _make_bot()
+        bot._process_request = AsyncMock()
+        message = _make_message("private")
+        message.reply_text = AsyncMock()
+
+        await bot._process_with_semaphore(
+            message=message,
+            url="https://youtube.com/watch?v=test",
+            is_instagram=False,
+            is_spotify=False,
+            is_youtube=True,
+            is_group=False,
+        )
+
+        queued_calls = [
+            c for c in message.reply_text.call_args_list
+            if "Queued" in c.args[0]
+        ]
+        assert len(queued_calls) == 0
+        assert bot._process_request.call_count == 1
+        call_kwargs = bot._process_request.call_args.kwargs
+        assert call_kwargs["status_message"] is None
+
+    @pytest.mark.asyncio
+    async def test_busy_bot_posts_queue_message(self):
+        bot = _make_bot()
+        bot._process_request = AsyncMock()
+        await bot.download_semaphore.acquire()
+
+        message = _make_message("private")
+        status_msg = AsyncMock()
+        message.reply_text = AsyncMock(return_value=status_msg)
+
+        async def handle():
+            await bot._process_with_semaphore(
+                message=message,
+                url="https://youtube.com/watch?v=test",
+                is_instagram=False,
+                is_spotify=False,
+                is_youtube=True,
+                is_group=False,
+            )
+
+        task = asyncio.ensure_future(handle())
+        await asyncio.sleep(0.1)
+        bot.download_semaphore.release()
+        await task
+
+        queued_calls = [
+            c for c in message.reply_text.call_args_list
+            if "Queued" in c.args[0]
+        ]
+        assert len(queued_calls) == 1
+        assert bot._process_request.call_count == 1
+        call_kwargs = bot._process_request.call_args.kwargs
+        assert call_kwargs["status_message"] is status_msg
+
+
+class TestPreDownloadRejectionRegression:
+    @pytest.mark.asyncio
+    async def test_private_rejection_shows_error_and_keeps_status(self):
+        bot = _make_bot()
+        bot.downloader.get_file_info = AsyncMock(return_value={
+            "file_size": bot.config.MAX_FILE_SIZE * 2
+        })
+        message = _make_message("private")
+        status_msg = AsyncMock()
+        message.reply_text = AsyncMock(return_value=status_msg)
+
+        await bot._process_request(
+            message=message,
+            url="https://youtube.com/watch?v=test",
+            is_instagram=False,
+            is_spotify=False,
+            is_youtube=True,
+            is_group=False,
+        )
+
+        edit_calls = status_msg.edit_text.call_args_list
+        file_too_large_calls = [
+            c for c in edit_calls
+            if "File too large" in (c.args[0] if c.args else "")
+        ]
+        assert len(file_too_large_calls) == 1
+        status_msg.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_group_rejection_deletes_message_once(self):
+        bot = _make_bot()
+        bot.downloader.get_file_info = AsyncMock(return_value={
+            "file_size": bot.config.MAX_FILE_SIZE * 2
+        })
+        message = _make_message("supergroup")
+        status_msg = AsyncMock()
+        message.reply_text = AsyncMock(return_value=status_msg)
+
+        await bot._process_request(
+            message=message,
+            url="https://youtube.com/watch?v=test",
+            is_instagram=False,
+            is_spotify=False,
+            is_youtube=True,
+            is_group=True,
+        )
+
         status_msg.delete.assert_called_once()

@@ -14,7 +14,8 @@ This project is a Telegram bot that allows users to download content from variou
 
 ## Requirements
 
-- Python 3.7 or higher
+- Python 3.10 or higher
+- `uv` package manager (https://docs.astral.sh/uv/)
 - `pyrogram` and `tgcrypto` for Telegram API
 - `yt-dlp` for general video downloads
 - `instaloader` for Instagram content
@@ -38,31 +39,25 @@ For browser-based YouTube downloads:
    cd telegram-ytdl-bot
    ```
 
-2. Create a virtual environment (optional but recommended):
+2. Install dependencies with uv:
 
    ```
-   python -m venv venv
-   source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+   uv sync
    ```
 
-3. Install the required packages:
+   To include dev dependencies (for running tests):
 
    ```
-   pip install -r requirements.txt
+   uv sync --dev
    ```
 
-4. For browser automation support (optional):
+3. Run the tests:
 
    ```
-   # Uncomment the browser automation dependencies in requirements.txt first, then:
-   pip install -r requirements.txt
-
-   # If using playwright, install browsers:
-   playwright install firefox  # or chrome
+   uv run pytest
    ```
 
-5. Set up your environment variables:
-   - Copy `.env.example` to `.env` and fill in your bot token and API credentials
+4. Set up your environment variables:
    - For Spotify support, you'll need to add your Spotify API credentials
    - For enhanced YouTube support, consider adding RapidAPI key or proxy settings
    - To enable browser automation, set `BROWSER_ENABLED=true` in your `.env` file
@@ -74,7 +69,13 @@ For browser-based YouTube downloads:
 1. Run the bot:
 
    ```
-   python src/bot.py
+   uv run python -m src
+   ```
+
+   Or using the installed entry point:
+
+   ```
+   uv run telegram-ytdl-bot
    ```
 
 2. Interact with the bot on Telegram by sending URLs to download:
