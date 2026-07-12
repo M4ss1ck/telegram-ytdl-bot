@@ -20,7 +20,7 @@ COPY . .
 
 RUN uv sync --frozen --no-dev
 
-RUN mkdir -p downloads
+RUN mkdir -p downloads sessions
 
 RUN useradd -m botuser && \
     chown -R botuser:botuser /app

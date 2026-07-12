@@ -135,6 +135,12 @@ committed or shared.
    - Instagram posts/reels: `https://www.instagram.com/p/...` or `https://www.instagram.com/reel/...`
    - Spotify tracks: `https://open.spotify.com/track/...`
 
+The Docker Compose setup stores Pyrogram's Telegram authorization session in
+the `bot-session` named volume. Keep this volume when rebuilding or recreating
+the container to avoid repeated bot authorization attempts and Telegram flood
+waits. `docker compose down` preserves it; `docker compose down --volumes`
+deletes it.
+
 ## Supported Platforms
 
 - YouTube and other video platforms (via yt-dlp)

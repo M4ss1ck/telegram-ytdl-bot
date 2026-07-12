@@ -22,6 +22,7 @@ class Bot:
         self.max_queue_size = 50
         self.app = Client(
             "ytdl_bot",
+            workdir=str(self.config.sessions_dir),
             api_id=self.config.API_ID,
             api_hash=self.config.API_HASH,
             bot_token=self.config.BOT_TOKEN

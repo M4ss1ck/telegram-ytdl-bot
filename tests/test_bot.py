@@ -20,6 +20,16 @@ def _make_bot():
     return bot
 
 
+def test_pyrogram_session_uses_persistent_directory():
+    client = MagicMock()
+    client.on_message.return_value = lambda handler: handler
+
+    with patch("src.bot.Client", return_value=client) as client_class:
+        bot = Bot()
+
+    assert client_class.call_args.kwargs["workdir"] == str(bot.config.sessions_dir)
+
+
 def _make_message(chat_type="private"):
     msg = MagicMock()
     msg.chat.type = chat_type

@@ -27,3 +27,5 @@ class Config:
         
         self.downloads_dir = Path(__file__).parent.parent / "downloads"
         os.makedirs(self.downloads_dir, exist_ok=True)
+        self.sessions_dir = Path(__file__).parent.parent / "sessions"
+        os.makedirs(self.sessions_dir, exist_ok=True)
