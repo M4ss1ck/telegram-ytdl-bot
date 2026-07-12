@@ -1,5 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait
+from pyrogram.types import InputMediaPhoto, InputMediaVideo
 import os
 import asyncio
 import re
@@ -232,7 +233,7 @@ class Bot:
 
         # Provide specific status message based on URL type
         if is_instagram:
-            status_text = "Processing Instagram content with Instaloader... This may take a moment."
+            status_text = "Processing Instagram content... This may take a moment."
         elif is_spotify:
             status_text = "Processing Spotify content... Converting to MP3."
         elif is_youtube:
@@ -245,59 +246,82 @@ class Bot:
         else:
             status_message = await message.reply_text(status_text)
 
-        file_path = None
+        file_paths = []
 
         try:
             # Download with timeout
-            file_path = await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self.downloader.download(url),
                 timeout=self.config.DOWNLOAD_TIMEOUT
             )
 
-            await status_message.edit_text("Download complete. Preparing to upload...")
+            # Normalize to list (gallery-dl returns list, yt-dlp returns str)
+            if isinstance(result, list):
+                file_paths = result
+            else:
+                file_paths = [result]
 
-            # Validate downloaded file
-            if not file_path or not os.path.exists(file_path):
-                raise ValueError("Download failed - no file created")
+            # Validate downloaded files
+            file_paths = [f for f in file_paths if f and os.path.exists(f)]
+            if not file_paths:
+                raise ValueError("Download failed - no files created")
 
-            file_size = os.path.getsize(file_path)
+            # Per-file size check: skip oversized files, delete them immediately
+            oversized = []
+            valid_paths = []
+            first_oversized_size = 0
+            for fp in file_paths:
+                file_size = os.path.getsize(fp)
+                if file_size > effective_max_size:
+                    oversized.append(fp)
+                    if first_oversized_size == 0:
+                        first_oversized_size = file_size
+                else:
+                    valid_paths.append(fp)
 
-            # Check file size limit AFTER download (using actual file size)
-            if file_size > effective_max_size:
-                size_mb = file_size / (1024 * 1024)
+            for fp in oversized:
+                try:
+                    os.remove(fp)
+                except Exception as e:
+                    logger.error(f"Error deleting oversized file: {e}")
+
+            if not valid_paths:
+                size_mb = first_oversized_size / (1024 * 1024)
                 limit_mb = effective_max_size / (1024 * 1024)
-
                 if is_group:
-                    # Get file title for logging
-                    file_name = os.path.basename(file_path)
-                    title = os.path.splitext(file_name)[0] if file_name else "Downloaded file"
-
-                    # Just delete the message silently in groups
                     await status_message.delete()
                     status_deleted = True
-
-                    # Log the rejection for debugging
-                    logger.info(f"Post-download check: File too large for group. "
-                               f"Actual: {size_mb:.1f}MB > {limit_mb:.0f}MB limit. File: {title}")
-
-                    # Clean up the downloaded file since we can't upload it
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        logger.error(f"Error deleting oversized file: {e}")
+                    logger.info(
+                        f"Post-download check: All files too large for group. "
+                        f"Largest: {size_mb:.1f}MB > {limit_mb:.0f}MB limit"
+                    )
                     return
+                raise ValueError(
+                    f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)"
+                )
 
-                raise ValueError(f"File too large ({size_mb:.1f}MB > {limit_mb:.0f}MB limit)")
+            if oversized:
+                logger.info(
+                    f"Skipped {len(oversized)} oversized file(s) from gallery"
+                )
 
-            await status_message.edit_text("Upload in progress...")
+            file_paths = valid_paths
 
-            await self.upload_file(message, file_path, status_message)
+            await status_message.edit_text("Download complete. Preparing to upload...")
 
-            # Only delete if upload succeeded
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                logger.error(f"Error deleting uploaded file: {e}")
+            if len(file_paths) == 1:
+                await status_message.edit_text("Upload in progress...")
+                await self.upload_file(message, file_paths[0], status_message)
+            else:
+                await status_message.edit_text("Upload in progress...")
+                await self._upload_album(message, file_paths, status_message)
+
+            # Delete uploaded files
+            for fp in file_paths:
+                try:
+                    os.remove(fp)
+                except Exception as e:
+                    logger.error(f"Error deleting uploaded file: {e}")
 
         except asyncio.TimeoutError:
             error_msg = "Download timed out."
@@ -332,11 +356,12 @@ class Bot:
             )
         finally:
             # Cleanup files only if they exist
-            if file_path and os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    logger.error(f"Error deleting file: {e}")
+            for fp in file_paths:
+                if os.path.exists(fp):
+                    try:
+                        os.remove(fp)
+                    except Exception as e:
+                        logger.error(f"Error deleting file: {e}")
             # Safely delete status message if it still exists
             if not status_deleted and not keep_status:
                 try:
@@ -388,6 +413,32 @@ class Bot:
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             raise
+
+    async def _upload_album(self, message, file_paths, status_message):
+        photo_extensions = {'.jpg', '.jpeg', '.png', '.webp'}
+        video_extensions = {'.mp4', '.mkv', '.webm'}
+
+        media_items = []
+        for fp in file_paths:
+            ext = os.path.splitext(fp)[1].lower()
+            if ext in photo_extensions:
+                media_items.append(InputMediaPhoto(media=fp))
+            elif ext in video_extensions:
+                media_items.append(InputMediaVideo(media=fp))
+            else:
+                await self.upload_file(message, fp, status_message)
+
+        if media_items:
+            for i in range(0, len(media_items), 10):
+                chunk = media_items[i:i + 10]
+                try:
+                    await message.reply_media_group(media=chunk)
+                except FloodWait as e:
+                    logger.warning(
+                        f"FloodWait during album upload, waiting {e.value}s"
+                    )
+                    await asyncio.sleep(e.value)
+                    await message.reply_media_group(media=chunk)
 
     async def _upload_progress(self, current, total, status_message, tracking_data):
         """Update upload progress at most once every five seconds."""
