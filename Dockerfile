@@ -22,8 +22,11 @@ RUN uv sync --frozen --no-dev
 
 RUN mkdir -p downloads sessions
 
-RUN useradd -m botuser && \
+RUN useradd -m -u 1000 botuser && \
     chown -R botuser:botuser /app
-USER botuser
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/app/.venv/bin/python", "-m", "src"]
