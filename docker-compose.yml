@@ -21,3 +21,7 @@ services:
 
 volumes:
   bot-session:
+
+networks:
+  default:
+    enable_ipv6: true
