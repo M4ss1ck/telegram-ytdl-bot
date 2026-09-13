@@ -76,8 +76,58 @@ async def test_instagram_download_does_not_force_video_conversion(mock_config):
 
     assert result == "picture.jpg"
     options = download_video.call_args.args[1]
-    assert options["format"] == "best"
     assert "postprocessors" not in options
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url, flags",
+    [
+        ("https://www.instagram.com/reel/example/", {"is_instagram": True}),
+        ("https://www.tiktok.com/@user/video/123", {}),
+        ("https://www.youtube.com/shorts/abc", {"is_youtube": True}),
+    ],
+)
+async def test_video_downloads_use_small_size_preset(mock_config, url, flags):
+    mock_config.VIDEO_MAX_RESOLUTION = 360
+    downloader = Downloader(mock_config)
+
+    with patch.object(downloader, "_download_video", return_value="v.mp4") as dl:
+        await downloader._download_with_ytdlp(url, **flags)
+
+    options = dl.call_args.args[1]
+    assert options["format"] == "bv*+ba/b"
+    assert options["format_sort"][:2] == ["vcodec:h264", "res:360"]
+    assert options["merge_output_format"] == "mp4"
+
+
+@pytest.mark.asyncio
+async def test_spotify_fallback_does_not_pick_smallest_audio(mock_config):
+    downloader = Downloader(mock_config)
+
+    with patch.object(downloader, "_download_video", return_value="s.mp3") as dl:
+        await downloader._download_with_ytdlp(
+            "https://open.spotify.com/track/x", is_spotify=True
+        )
+
+    options = dl.call_args.args[1]
+    assert options["format"] == "bestaudio/best"
+    assert "format_sort" not in options
+
+
+@pytest.mark.asyncio
+async def test_size_estimate_uses_same_selector_as_download(mock_config):
+    downloader = Downloader(mock_config)
+
+    with patch.object(downloader, "_extract_info", return_value={}) as extract, \
+            patch.object(downloader, "_download_video", return_value="v.mp4") as dl:
+        await downloader.get_file_info("https://www.tiktok.com/@u/video/1")
+        await downloader._download_with_ytdlp("https://www.tiktok.com/@u/video/1")
+
+    info_opts = extract.call_args.args[1]
+    download_opts = dl.call_args.args[1]
+    assert info_opts["format"] == download_opts["format"]
+    assert info_opts["format_sort"] == download_opts["format_sort"]
 
 
 def test_download_uses_image_filepath_reported_by_ytdlp(mock_config, tmp_path):

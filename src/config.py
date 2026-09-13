@@ -4,6 +4,7 @@ from pathlib import Path
 
 DEFAULT_MAX_FILE_SIZE_MB = 300
 DEFAULT_GROUP_MAX_FILE_SIZE_MB = 300
+DEFAULT_VIDEO_MAX_RESOLUTION = 480
 
 class Config:
     def __init__(self):
@@ -18,7 +19,13 @@ class Config:
         self.MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', DEFAULT_MAX_FILE_SIZE_MB * 1024 * 1024))
         # Group file size limit (default 300MB)
         self.GROUP_MAX_FILE_SIZE = int(os.getenv('GROUP_MAX_FILE_SIZE', DEFAULT_GROUP_MAX_FILE_SIZE_MB * 1024 * 1024))
-        
+
+        # Short side (in pixels) videos are capped at, e.g. 480 means 480x854 for
+        # vertical clips. Lower values mean smaller uploads.
+        self.VIDEO_MAX_RESOLUTION = int(os.getenv('VIDEO_MAX_RESOLUTION', DEFAULT_VIDEO_MAX_RESOLUTION))
+        if self.VIDEO_MAX_RESOLUTION <= 0:
+            raise ValueError("VIDEO_MAX_RESOLUTION must be a positive number of pixels")
+
         # Cookie file path (optional)
         self.COOKIE_FILE_PATH = os.getenv('COOKIE_FILE_PATH', None)
         
