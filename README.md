@@ -191,6 +191,25 @@ The browser-based approach simulates a real browser visiting YouTube or a YouTub
 
 This method is slower but more reliable in heavily restricted environments.
 
+## Video Size Preset
+
+The bot is tuned for sharing viral clips (Instagram, TikTok, Shorts) in chats, so it picks the smallest reasonable video instead of the best quality. For every yt-dlp video download it ranks formats by, in order:
+
+1. **H.264 codec**: plays inline on every Telegram client (AV1/VP9 do not reliably)
+2. **Resolution cap**: the largest short side at or below `VIDEO_MAX_RESOLUTION` (default `480`, so a vertical clip lands at about 480x854). If nothing fits, the closest one above is used
+3. **AAC audio**: muxes into MP4 without re-encoding
+4. **Smallest file**: among equal candidates
+
+No re-encoding happens, so the cost is zero CPU. Sources that only offer one file (some posts) download that file as is.
+
+```
+VIDEO_MAX_RESOLUTION=480  # default
+VIDEO_MAX_RESOLUTION=360  # smaller uploads
+VIDEO_MAX_RESOLUTION=720  # sharper, larger
+```
+
+The pre-download size check uses the same ranking, so its estimate matches what gets downloaded. Spotify audio is not affected.
+
 ## Group File Size Limits
 
 The bot includes a feature to limit file downloads in group chats to prevent large files from being shared inappropriately:

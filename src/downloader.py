@@ -9,6 +9,30 @@ from .spotify_downloader import SpotifyDownloader
 
 logger = logging.getLogger(__name__)
 
+
+def video_format_options(max_resolution):
+    """yt-dlp options that pick the smallest reasonable video for chat sharing.
+
+    Shared clips (TikTok, Instagram, Shorts) are watched on phones, so size
+    matters more than quality. Sort order, most important first:
+    - vcodec:h264  prefer H.264, which every Telegram client plays inline
+                   (AV1/VP9 are not reliably supported)
+    - res:N        largest short side <= N; if nothing fits, the smallest above
+                   (short side, so vertical 576x1024 counts as 576)
+    - acodec:aac   AAC audio, which muxes into MP4 without re-encoding
+    - +size, +br   among equal candidates, the smaller file wins
+    """
+    return {
+        'format': 'bv*+ba/b',
+        'format_sort': [
+            'vcodec:h264',
+            f'res:{max_resolution}',
+            'acodec:aac',
+            '+size',
+            '+br',
+        ],
+    }
+
 class Downloader:
     def __init__(self, config):
         self.config = config
@@ -26,7 +50,8 @@ class Downloader:
                 'nocheckcertificate': True,
                 'ignoreerrors': False,
                 'no_color': True,
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+                # Same selector as the download so the size estimate matches
+                **video_format_options(self.config.VIDEO_MAX_RESOLUTION),
             }
             
             # Add general headers
@@ -135,7 +160,7 @@ class Downloader:
         # Base options for all downloads
         ydl_opts = {
             'outtmpl': str(self.config.downloads_dir / '%(title)s.%(ext)s'),
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+            **video_format_options(self.config.VIDEO_MAX_RESOLUTION),
             'merge_output_format': 'mp4',
             'quiet': True,
             'no_warnings': True,
@@ -164,11 +189,13 @@ class Downloader:
                         'include_feeds': True,
                     }
                 },
-                'format': 'best',  # Instagram often has limited format options
             })
         
         # Add Spotify-specific options if this is a Spotify URL
         if is_spotify:
+            # Music keeps the default audio ranking; the video sort would pick
+            # the lowest-bitrate source before the MP3 encode.
+            ydl_opts.pop('format_sort')
             ydl_opts.update({
                 'format': 'bestaudio/best',
                 'postprocessors': [{

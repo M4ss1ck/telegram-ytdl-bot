@@ -25,6 +25,7 @@ def mock_config(downloads_dir):
     cfg.MAX_FILE_SIZE = 300 * 1024 * 1024
     cfg.GROUP_MAX_FILE_SIZE = 300 * 1024 * 1024
     cfg.COOKIE_FILE_PATH = None
+    cfg.VIDEO_MAX_RESOLUTION = 480
     return cfg
 
 
