@@ -383,18 +383,39 @@ class Bot:
         send anything that is not a supported photo or video as a document.
         """
         prepared = []
-        for file_path in file_paths:
-            extension = os.path.splitext(file_path)[1].lower()
-            if extension in CONVERTIBLE_PHOTO_EXTENSIONS:
-                converted = await self._convert_to_jpeg(file_path)
-                if converted:
-                    file_path = converted
-            prepared.append(file_path)
+        converted_outputs = []
+        try:
+            for file_path in file_paths:
+                extension = os.path.splitext(file_path)[1].lower()
+                if extension in CONVERTIBLE_PHOTO_EXTENSIONS:
+                    converted = await self._convert_to_jpeg(file_path)
+                    if converted:
+                        converted_outputs.append(converted)
+                        file_path = converted
+                prepared.append(file_path)
+        except BaseException:
+            # These outputs already replaced their sources and the caller has
+            # not received them yet, so remove them before re-raising.
+            for output in converted_outputs:
+                try:
+                    os.remove(output)
+                except OSError:
+                    pass
+            raise
         return prepared
+
+    def _unique_target_path(self, file_path):
+        """Pick a JPEG output name that cannot overwrite an existing file."""
+        target = f"{file_path}.jpg"
+        index = 1
+        while os.path.exists(target):
+            target = f"{file_path}.{index}.jpg"
+            index += 1
+        return target
 
     async def _convert_to_jpeg(self, file_path):
         """Return a JPEG version of an image Telegram rejects, or None."""
-        target = os.path.splitext(file_path)[0] + ".jpg"
+        target = self._unique_target_path(file_path)
         try:
             process = await asyncio.create_subprocess_exec(
                 "ffmpeg",
@@ -417,6 +438,11 @@ class Bot:
                 f"Could not convert {os.path.basename(file_path)} to JPEG: "
                 f"{stderr.decode(errors='replace').strip()}"
             )
+            # ffmpeg may have left a partial file behind.
+            try:
+                os.remove(target)
+            except OSError:
+                pass
             return None
 
         try:
@@ -445,27 +471,21 @@ class Bot:
         else:
             await message.reply_document(document=file_path, **options)
 
-    async def upload_file(self, message, file_path, status_message):
-        """Upload one file while updating the existing status message."""
-        extension = os.path.splitext(file_path)[1].lower()
-        progress_args = (status_message, [asyncio.get_event_loop().time(), False])
+    @staticmethod
+    def _is_media_rejection(error):
+        """Whether a Telegram error means it will not accept the file's format."""
+        error_id = getattr(error, "ID", None) or ""
+        return error_id.startswith(("PHOTO_", "VIDEO_", "MEDIA_")) or (
+            error_id == "IMAGE_PROCESS_FAILED"
+        )
 
+    async def _send_with_fallback(self, message, file_path, extension, progress_args=None):
+        """Send a file, falling back to a document when Telegram rejects its format."""
         try:
             await self._send_media(message, file_path, extension, progress_args)
-
-        except FloodWait as e:
-            logger.warning(f"FloodWait during upload, waiting {e.value} seconds before retry...")
-            await asyncio.sleep(e.value)
-            # Retry without progress updates to avoid further flood
-            try:
-                await self._send_media(message, file_path, extension)
-            except Exception as retry_e:
-                logger.error(f"Upload retry failed: {retry_e}")
-                raise
         except RPCError as e:
             is_media = extension in PHOTO_EXTENSIONS or extension in VIDEO_EXTENSIONS
-            if not is_media or getattr(e, "CODE", None) != 400:
-                logger.error(f"Upload failed: {e}")
+            if not is_media or not self._is_media_rejection(e):
                 raise
             logger.warning(
                 f"Telegram rejected {os.path.basename(file_path)} as "
@@ -473,9 +493,39 @@ class Bot:
                 f"({e}); sending it as a document instead"
             )
             await message.reply_document(document=file_path)
+
+    async def upload_file(self, message, file_path, status_message):
+        """Upload one file while updating the existing status message."""
+        extension = os.path.splitext(file_path)[1].lower()
+        progress_args = (status_message, [asyncio.get_event_loop().time(), False])
+
+        try:
+            await self._send_with_fallback(message, file_path, extension, progress_args)
+        except FloodWait as e:
+            logger.warning(f"FloodWait during upload, waiting {e.value} seconds before retry...")
+            await asyncio.sleep(e.value)
+            # Retry without progress updates to avoid further flood
+            try:
+                await self._send_with_fallback(message, file_path, extension)
+            except Exception as retry_e:
+                logger.error(f"Upload retry failed: {retry_e}")
+                raise
         except Exception as e:
             logger.error(f"Upload failed: {e}")
             raise
+
+    async def _send_album_chunk(self, message, chunk, status_message):
+        media = [item for _, item in chunk]
+        try:
+            await message.reply_media_group(media=media)
+        except RPCError as e:
+            if not self._is_media_rejection(e):
+                raise
+            logger.warning(
+                f"Telegram rejected album ({e}); uploading files individually"
+            )
+            for file_path, _ in chunk:
+                await self.upload_file(message, file_path, status_message)
 
     async def _upload_album(self, message, file_paths, status_message):
         album = []
@@ -491,23 +541,14 @@ class Bot:
 
         for i in range(0, len(album), 10):
             chunk = album[i:i + 10]
-            media = [item for _, item in chunk]
             try:
-                await message.reply_media_group(media=media)
+                await self._send_album_chunk(message, chunk, status_message)
             except FloodWait as e:
                 logger.warning(
                     f"FloodWait during album upload, waiting {e.value}s"
                 )
                 await asyncio.sleep(e.value)
-                await message.reply_media_group(media=media)
-            except RPCError as e:
-                if getattr(e, "CODE", None) != 400:
-                    raise
-                logger.warning(
-                    f"Telegram rejected album ({e}); uploading files individually"
-                )
-                for file_path, _ in chunk:
-                    await self.upload_file(message, file_path, status_message)
+                await self._send_album_chunk(message, chunk, status_message)
 
         for file_path in document_paths:
             await self.upload_file(message, file_path, status_message)
