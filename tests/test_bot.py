@@ -338,6 +338,21 @@ class TestPrepareMediaFiles:
         assert source.exists()
 
     @pytest.mark.asyncio
+    async def test_ffmpeg_spawn_error_leaves_file_unchanged(self, tmp_path):
+        bot = _make_bot()
+        source = tmp_path / "instagram_photo.webp"
+        source.write_bytes(b"webp data")
+
+        with patch(
+            "src.bot.asyncio.create_subprocess_exec",
+            side_effect=PermissionError("permission denied"),
+        ):
+            result = await bot._prepare_media_files([str(source)])
+
+        assert result == [str(source)]
+        assert source.exists()
+
+    @pytest.mark.asyncio
     async def test_conversion_failure_removes_partial_output(self, tmp_path):
         bot = _make_bot()
         source = tmp_path / "instagram_photo.webp"
@@ -403,12 +418,12 @@ class TestPrepareMediaFiles:
                 process = MagicMock(returncode=0)
                 process.communicate = AsyncMock(return_value=(b"", b""))
                 return process
-            raise OSError("could not spawn ffmpeg")
+            raise asyncio.CancelledError()
 
         with patch(
             "src.bot.asyncio.create_subprocess_exec", side_effect=create_process
         ):
-            with pytest.raises(OSError):
+            with pytest.raises(asyncio.CancelledError):
                 await bot._prepare_media_files([str(first), str(second)])
 
         # The converted output replaced its source, so it must be removed too.

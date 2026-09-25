@@ -429,8 +429,8 @@ class Bot:
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await process.communicate()
-        except FileNotFoundError:
-            logger.warning("ffmpeg is not available; sending image as document")
+        except OSError as e:
+            logger.warning(f"Could not run ffmpeg ({e}); sending image as document")
             return None
 
         if process.returncode or not os.path.exists(target):
