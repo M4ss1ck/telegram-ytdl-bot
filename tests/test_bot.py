@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
+from pyrogram.errors import FloodWait, PhotoExtInvalid
+from pyrogram.types import InputMediaPhoto, InputMediaVideo
 
 from src.bot import Bot
 
@@ -129,6 +131,148 @@ class TestUploadFile:
         progress_args = message.reply_video.call_args.kwargs["progress_args"]
         assert progress_args[0] is status_msg
 
+    @pytest.mark.asyncio
+    async def test_sends_unsupported_image_as_document(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_photo = AsyncMock()
+        message.reply_document = AsyncMock()
+        status_msg = AsyncMock()
+
+        file_path = tmp_path / "picture.webp"
+        file_path.write_bytes(b"fake webp data")
+
+        await bot.upload_file(message, str(file_path), status_msg)
+
+        message.reply_photo.assert_not_called()
+        message.reply_document.assert_called_once()
+        assert message.reply_document.call_args.kwargs["document"] == str(file_path)
+
+    @pytest.mark.asyncio
+    async def test_photo_rejected_by_telegram_falls_back_to_document(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_photo = AsyncMock(
+            side_effect=PhotoExtInvalid(value=400, rpc_name="PHOTO_EXT_INVALID")
+        )
+        message.reply_document = AsyncMock()
+        status_msg = AsyncMock()
+
+        file_path = tmp_path / "picture.jpg"
+        file_path.write_bytes(b"fake image data")
+
+        await bot.upload_file(message, str(file_path), status_msg)
+
+        message.reply_document.assert_called_once()
+        assert message.reply_document.call_args.kwargs["document"] == str(file_path)
+
+    @pytest.mark.asyncio
+    async def test_floodwait_retries_without_progress(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_video = AsyncMock(side_effect=[FloodWait(value=1), AsyncMock()])
+        status_msg = AsyncMock()
+
+        file_path = tmp_path / "test.mp4"
+        file_path.write_bytes(b"fake mp4 data")
+
+        with patch("src.bot.asyncio.sleep", new=AsyncMock()):
+            await bot.upload_file(message, str(file_path), status_msg)
+
+        assert message.reply_video.call_count == 2
+        assert "progress" not in message.reply_video.call_args.kwargs
+
+
+class TestUploadAlbum:
+    @pytest.mark.asyncio
+    async def test_mixed_media_album_sends_unsupported_files_as_documents(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_media_group = AsyncMock()
+        message.reply_document = AsyncMock()
+        status_msg = AsyncMock()
+
+        photo = tmp_path / "photo.jpg"
+        photo.write_bytes(b"jpeg data")
+        webp = tmp_path / "photo.webp"
+        webp.write_bytes(b"webp data")
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"mp4 data")
+
+        await bot._upload_album(message, [str(photo), str(webp), str(video)], status_msg)
+
+        media = message.reply_media_group.call_args.kwargs["media"]
+        assert len(media) == 2
+        assert isinstance(media[0], InputMediaPhoto)
+        assert isinstance(media[1], InputMediaVideo)
+        message.reply_document.assert_called_once()
+        assert message.reply_document.call_args.kwargs["document"] == str(webp)
+
+    @pytest.mark.asyncio
+    async def test_rejected_album_falls_back_to_individual_uploads(self, tmp_path):
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_media_group = AsyncMock(
+            side_effect=PhotoExtInvalid(value=400, rpc_name="PHOTO_EXT_INVALID")
+        )
+        message.reply_photo = AsyncMock()
+        message.reply_video = AsyncMock()
+        status_msg = AsyncMock()
+
+        photo = tmp_path / "photo.jpg"
+        photo.write_bytes(b"jpeg data")
+        video = tmp_path / "clip.mp4"
+        video.write_bytes(b"mp4 data")
+
+        await bot._upload_album(message, [str(photo), str(video)], status_msg)
+
+        message.reply_photo.assert_called_once()
+        message.reply_video.assert_called_once()
+
+
+class TestPrepareMediaFiles:
+    @pytest.mark.asyncio
+    async def test_converts_webp_to_jpeg(self, tmp_path):
+        bot = _make_bot()
+        source = tmp_path / "instagram_photo.webp"
+        source.write_bytes(b"webp data")
+
+        async def create_process(*command, **kwargs):
+            Path(command[-1]).write_bytes(b"jpeg data")
+            process = MagicMock(returncode=0)
+            process.communicate = AsyncMock(return_value=(b"", b""))
+            return process
+
+        with patch(
+            "src.bot.asyncio.create_subprocess_exec", side_effect=create_process
+        ) as create_subprocess:
+            result = await bot._prepare_media_files([str(source)])
+
+        expected = str(tmp_path / "instagram_photo.jpg")
+        assert result == [expected]
+        assert os.path.exists(expected)
+        assert not source.exists()
+        assert create_subprocess.call_args.args[0] == "ffmpeg"
+
+    @pytest.mark.asyncio
+    async def test_keeps_file_when_conversion_fails(self, tmp_path):
+        bot = _make_bot()
+        source = tmp_path / "instagram_photo.webp"
+        source.write_bytes(b"webp data")
+
+        async def create_process(*command, **kwargs):
+            process = MagicMock(returncode=1)
+            process.communicate = AsyncMock(return_value=(b"", b"conversion failed"))
+            return process
+
+        with patch(
+            "src.bot.asyncio.create_subprocess_exec", side_effect=create_process
+        ):
+            result = await bot._prepare_media_files([str(source)])
+
+        assert result == [str(source)]
+        assert source.exists()
+
 
 class TestProcessRequestSuccess:
     """After successful processing, exactly one bot response remains (the media)."""
@@ -183,6 +327,41 @@ class TestProcessRequestSuccess:
 
         status_msg.delete.assert_called_once()
         message.reply_document.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_webp_photo_is_converted_before_upload(self, tmp_path):
+        bot = _make_bot()
+        webp_path = tmp_path / "instagram_photo.webp"
+        webp_path.write_bytes(b"webp data")
+        bot.downloader.download = AsyncMock(return_value=[str(webp_path)])
+
+        async def create_process(*command, **kwargs):
+            Path(command[-1]).write_bytes(b"jpeg data")
+            process = MagicMock(returncode=0)
+            process.communicate = AsyncMock(return_value=(b"", b""))
+            return process
+
+        message = _make_message("private")
+        status_msg = AsyncMock()
+        message.reply_text = AsyncMock(return_value=status_msg)
+        message.reply_photo = AsyncMock()
+
+        with patch(
+            "src.bot.asyncio.create_subprocess_exec", side_effect=create_process
+        ):
+            await bot._process_request(
+                message=message,
+                url="https://www.instagram.com/p/example/",
+                is_instagram=True,
+                is_spotify=False,
+                is_youtube=False,
+                is_group=False,
+            )
+
+        message.reply_photo.assert_called_once()
+        assert message.reply_photo.call_args.kwargs["photo"] == str(
+            tmp_path / "instagram_photo.jpg"
+        )
 
 
 class TestProcessRequestError:
