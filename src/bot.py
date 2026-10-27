@@ -1,6 +1,6 @@
 from pyrogram import Client, filters
 from pyrogram.errors import FloodWait, RPCError
-from pyrogram.types import InputMediaPhoto, InputMediaVideo
+from pyrogram.types import InputMediaPhoto, InputMediaVideo, LinkPreviewOptions
 import os
 import asyncio
 import re
@@ -497,7 +497,7 @@ class Bot:
     async def upload_file(self, message, file_path, status_message):
         """Upload one file while updating the existing status message."""
         extension = os.path.splitext(file_path)[1].lower()
-        progress_args = (status_message, [asyncio.get_event_loop().time(), False])
+        progress_args = (status_message, [asyncio.get_running_loop().time(), False])
 
         try:
             await self._send_with_fallback(message, file_path, extension, progress_args)
@@ -558,7 +558,7 @@ class Bot:
         try:
             if tracking_data[1]:
                 return
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             if now - tracking_data[0] < 5:
                 return
             tracking_data[0] = now
@@ -580,10 +580,10 @@ class Bot:
                 if status_message:
                     await status_message.edit_text(error_text)
                 else:
+                    # reply_text always quotes the source message
                     await message.reply_text(
                         error_text,
-                        disable_web_page_preview=True,
-                        reply_to_message_id=message.id,
+                        link_preview_options=LinkPreviewOptions(is_disabled=True),
                     )
                 return True
             except Exception as e:

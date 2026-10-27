@@ -14,10 +14,10 @@ This project is a Telegram bot that allows users to download content from variou
 
 ## Requirements
 
-- Python 3.10 or higher
+- Python 3.14 or higher
 - `uv` package manager (https://docs.astral.sh/uv/)
-- `pyrogram` and `tgcrypto` for Telegram API
-- `yt-dlp` for general video downloads
+- `kurigram` (maintained Pyrogram fork, imported as `pyrogram`) and `tgcrypto-pyrofork` for Telegram API
+- `yt-dlp` with `curl_cffi` for general video downloads and browser impersonation
 - `gallery-dl` for Instagram images and galleries
 - `spotipy` for Spotify content
 - `ffmpeg` for audio/video processing
@@ -64,11 +64,11 @@ For browser-based YouTube downloads:
    - To use cookies with yt-dlp methods, set `COOKIE_FILE_PATH` to the path of your cookies.txt file
    - To configure group file size limits, set `GROUP_MAX_FILE_SIZE` (default: 300MB)
 
-### Instagram Cookies from Floorp
+### Site Cookies from Floorp
 
-Instagram downloads use cookies from a logged-in Floorp profile. The bootstrap
-script is intended to run on the Docker host, not inside the bot container. It
-currently looks for Floorp's Flatpak profile under
+Instagram (and optionally Reddit) downloads use cookies from a logged-in Floorp
+profile. The bootstrap script is intended to run on the Docker host, not inside
+the bot container. It currently looks for Floorp's Flatpak profile under
 `~/.var/app/one.ablaze.floorp/.floorp`.
 
 1. Open Floorp and log into `https://www.instagram.com`.
@@ -79,19 +79,32 @@ currently looks for Floorp's Flatpak profile under
    uv sync
    ```
 
-4. Export the current Instagram session:
+4. Export the current sessions:
 
    ```bash
-   uv run python scripts/bootstrap_instagram_cookies.py
+   uv run python scripts/bootstrap_cookies.py                               # Instagram only
+   uv run python scripts/bootstrap_cookies.py --site instagram --site reddit # both
    ```
 
-   The script finds the most recently modified Floorp profile, exports its
-   Instagram cookies to `secrets/instagram-cookies.txt`, requires a `sessionid`
-   cookie, sets the file mode to `0600`, and updates `.env` with:
+   The script finds the most recently modified Floorp profile and exports the
+   cookies of every requested site into one file, `secrets/cookies.txt`, with
+   mode `0600`. Cookies of other domains already in that file (for example
+   YouTube visitor cookies) are kept; only the requested sites' cookies are
+   replaced. Each requested site must have its login cookie, or the script
+   fails without writing anything:
+
+   | Site | `--site` | Required login cookie |
+   |---|---|---|
+   | Instagram | `instagram` (default) | `sessionid` |
+   | Reddit | `reddit` | `reddit_session` |
+
+   It then updates `.env` with:
 
    ```text
-   COOKIE_FILE_PATH=/run/secrets/instagram-cookies.txt
+   COOKIE_FILE_PATH=/run/secrets/cookies.txt
    ```
+
+   The script prints cookie counts per site, never cookie values.
 
 5. Recreate the bot container so it receives the cookie-file configuration:
 
@@ -111,10 +124,47 @@ currently looks for Floorp's Flatpak profile under
    Bot is starting...
    ```
 
-Run the export again whenever the Instagram browser session is refreshed or
-invalidated. Treat `secrets/instagram-cookies.txt` as a password: its
-`sessionid` grants access to the logged-in Instagram session and must not be
-committed or shared.
+Run the export again whenever a browser session is refreshed or invalidated.
+Treat `secrets/cookies.txt` as a password: `sessionid` and `reddit_session`
+grant access to the logged-in accounts and must not be committed or shared.
+
+Upgrading from the Instagram-only setup: the old
+`scripts/bootstrap_instagram_cookies.py` and `secrets/instagram-cookies.txt`
+are replaced by the files above. Seed the new file from the old one first, so
+the anonymous YouTube cookies it collected survive (without them YouTube
+answers "Sign in to confirm you're not a bot"), then export, recreate the
+container, and delete the old file:
+
+```bash
+install -m 600 secrets/instagram-cookies.txt secrets/cookies.txt
+uv run python scripts/bootstrap_cookies.py
+docker compose up -d --force-recreate
+rm secrets/instagram-cookies.txt
+```
+
+### Reddit
+
+Reddit blocks anonymous requests from servers with an HTML `403 Blocked` page,
+which yt-dlp reports as `Account authentication is required`. Two things are
+needed:
+
+- **Browser impersonation.** The image installs `yt-dlp[curl-cffi]`, which
+  gets yt-dlp's Reddit session setup past the block. On its own this is not
+  enough: post metadata still requires a login.
+- **A logged-in Reddit session.** Log into Reddit in Floorp with a dedicated
+  throwaway account, not your personal one, since Reddit may flag accounts that
+  make automated requests from a server. Enable "Show mature content" in that
+  account's settings, or NSFW posts fail with the same error. Then export with
+  `--site reddit` as above.
+
+When a Reddit download fails, the bot log names the likely cause, for example:
+
+```text
+WARNING:src.downloader:Reddit download blocked: Reddit blocked the anonymous request and no reddit_session cookie is configured; export one with `scripts/bootstrap_cookies.py --site reddit`
+```
+
+If the log says the configured `reddit_session` cookie was rejected, the
+session expired or was logged out: log in again in Floorp and re-export.
 
 ## Usage
 
@@ -133,9 +183,10 @@ committed or shared.
 2. Interact with the bot on Telegram by sending URLs to download:
    - YouTube videos: `https://www.youtube.com/watch?v=...`
    - Instagram posts/reels: `https://www.instagram.com/p/...` or `https://www.instagram.com/reel/...`
+   - Reddit posts (needs a Reddit login, see [Reddit](#reddit)): `https://www.reddit.com/r/<sub>/comments/...` or share links `https://www.reddit.com/r/<sub>/s/...`
    - Spotify tracks: `https://open.spotify.com/track/...`
 
-The Docker Compose setup stores Pyrogram's Telegram authorization session in
+The Docker Compose setup stores Pyrogram's (kurigram's) Telegram authorization session in
 the `bot-session` named volume. Keep this volume when rebuilding or recreating
 the container to avoid repeated bot authorization attempts and Telegram flood
 waits. `docker compose down` preserves it; `docker compose down --volumes`
@@ -149,6 +200,7 @@ deletes it.
   - Optional cookie support for yt-dlp methods to bypass login/bot checks
   - Multiple fallback mechanisms to handle blocked or restricted content
 - Instagram videos via yt-dlp, with gallery-dl for photo posts
+- Reddit videos via yt-dlp (requires a logged-in Reddit cookie)
 - Spotify tracks, albums, and playlists (via specialized Spotify downloader)
 
 ## YouTube Download Methods
