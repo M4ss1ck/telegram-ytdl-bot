@@ -4,6 +4,7 @@ import asyncio
 import re
 import logging
 import shutil
+from importlib.util import find_spec
 from .gallery_downloader import GalleryDownloader
 from .spotify_downloader import SpotifyDownloader
 
@@ -33,6 +34,69 @@ def video_format_options(max_resolution):
         ],
     }
 
+
+# Present only in a logged-in session. token_v2 is not enough: Reddit also
+# issues it to anonymous visitors.
+REDDIT_LOGIN_COOKIE = 'reddit_session'
+
+
+def cookie_names_for_domain(cookie_file, domain):
+    """Cookie names in a Netscape cookie file that apply to ``domain``."""
+    names = set()
+    if not cookie_file or not os.path.exists(cookie_file):
+        return names
+    with open(cookie_file, encoding='utf-8', errors='replace') as handle:
+        for line in handle:
+            if line.startswith('#HttpOnly_'):
+                line = line[len('#HttpOnly_'):]
+            elif line.startswith('#'):
+                continue
+            fields = line.rstrip('\n').split('\t')
+            if len(fields) != 7:
+                continue
+            host = fields[0].lstrip('.')
+            if host == domain or host.endswith('.' + domain):
+                names.add(fields[5])
+    return names
+
+
+def explain_ytdlp_error(message, cookie_file=None, impersonation_available=None):
+    """Return the likely cause of a misleading yt-dlp error, or None.
+
+    Reddit answers bot-looking requests with an HTML "403 Blocked" page, and
+    yt-dlp reports that as "Account authentication is required".
+    """
+    if '[Reddit]' not in message or 'Account authentication is required' not in message:
+        return None
+    if impersonation_available is None:
+        impersonation_available = find_spec('curl_cffi') is not None
+
+    causes = []
+    if not impersonation_available:
+        causes.append(
+            'curl_cffi is not installed, so yt-dlp cannot impersonate a browser'
+        )
+    if REDDIT_LOGIN_COOKIE in cookie_names_for_domain(cookie_file, 'reddit.com'):
+        causes.append(
+            f'Reddit rejected the configured {REDDIT_LOGIN_COOKIE} cookie '
+            '(expired or logged out); re-export it with '
+            '`scripts/bootstrap_cookies.py --site reddit`'
+        )
+    else:
+        causes.append(
+            f'Reddit blocked the anonymous request and no {REDDIT_LOGIN_COOKIE} '
+            'cookie is configured; export one with '
+            '`scripts/bootstrap_cookies.py --site reddit`'
+        )
+    return 'Reddit download blocked: ' + '; '.join(causes)
+
+
+def log_ytdlp_error_cause(message, cookie_file):
+    cause = explain_ytdlp_error(message, cookie_file)
+    if cause:
+        logger.warning(cause)
+
+
 class Downloader:
     def __init__(self, config):
         self.config = config
@@ -52,14 +116,6 @@ class Downloader:
                 'no_color': True,
                 # Same selector as the download so the size estimate matches
                 **video_format_options(self.config.VIDEO_MAX_RESOLUTION),
-            }
-            
-            # Add general headers
-            ydl_opts['http_headers'] = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive',
             }
             
             cookie_file = self._prepare_cookie_file()
@@ -103,6 +159,7 @@ class Downloader:
                 }
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"yt-dlp info extraction error: {str(e)}")
+            log_ytdlp_error_cause(str(e), ydl_opts.get('cookiefile'))
             raise Exception(f"Info extraction error: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error during info extraction: {str(e)}")
@@ -171,14 +228,6 @@ class Downloader:
             'retries': 10,
             'fragment_retries': 10,
             'skip_unavailable_fragments': True,
-        }
-        
-        # Add general headers
-        ydl_opts['http_headers'] = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Connection': 'keep-alive',
         }
         
         # Add Instagram-specific options if this is an Instagram URL
@@ -286,6 +335,7 @@ class Downloader:
                 return file_path
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"yt-dlp download error: {str(e)}")
+            log_ytdlp_error_cause(str(e), ydl_opts.get('cookiefile'))
             raise Exception(f"Download error: {str(e)}")
         except Exception as e:
             logger.error(f"Unexpected error during download: {str(e)}")

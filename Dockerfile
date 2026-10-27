@@ -1,4 +1,4 @@
-FROM python:3.10-slim AS development
+FROM python:3.14-slim AS development
 
 WORKDIR /app
 
@@ -10,7 +10,10 @@ RUN apt-get update && \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.6 /uv /uvx /bin/
+
+# Use the image's Python; never fetch a different interpreter at build time
+ENV UV_PYTHON_DOWNLOADS=never
 
 COPY pyproject.toml uv.lock ./
 

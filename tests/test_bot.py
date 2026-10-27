@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import tempfile
 from pathlib import Path
@@ -6,7 +7,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 import pytest
 from pyrogram.errors import FloodWait, PeerIdInvalid, PhotoExtInvalid
-from pyrogram.types import InputMediaPhoto, InputMediaVideo
+from pyrogram.types import InputMediaPhoto, InputMediaVideo, Message
 
 from src.bot import Bot
 
@@ -53,6 +54,20 @@ class TestSendError:
         message.reply_text.assert_called_once()
         call_args = message.reply_text.call_args
         assert "something went wrong" in call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_private_error_call_matches_real_reply_text_signature(self):
+        # Mocks accept any kwargs; bind against the real method so a library
+        # signature change (pyrogram -> kurigram dropped reply_to_message_id)
+        # fails here instead of in production.
+        bot = _make_bot()
+        message = _make_message("private")
+        message.reply_text = AsyncMock()
+
+        await bot.send_error(message, "something went wrong")
+
+        args, kwargs = message.reply_text.call_args
+        inspect.signature(Message.reply_text).bind(message, *args, **kwargs)
 
     @pytest.mark.asyncio
     async def test_silent_in_group(self):
